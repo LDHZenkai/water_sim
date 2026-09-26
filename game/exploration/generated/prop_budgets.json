@@ -1,0 +1,125 @@
+[
+  {
+    "baked_ceiling": 28000.0,
+    "baked_triangles": 9408,
+    "base_triangles": 8640.0,
+    "budget": 28000.0,
+    "id": "round_wooden_table_01",
+    "source_triangles": 8640.0
+  },
+  {
+    "baked_ceiling": 14000.0,
+    "base_triangles": 11645.0,
+    "budget": 14000.0,
+    "id": "seadogs_compass",
+    "source_triangles": 11645.0
+  },
+  {
+    "baked_ceiling": 4800.0,
+    "base_triangles": 3328.0,
+    "budget": 4800.0,
+    "id": "wooden_candlestick",
+    "source_triangles": 212992.0
+  },
+  {
+    "baked_ceiling": 14000.0,
+    "base_triangles": 10548.0,
+    "budget": 14000.0,
+    "id": "brass_candleholders",
+    "source_triangles": 41936.0
+  },
+  {
+    "baked_ceiling": 30000.0,
+    "baked_triangles": 29110,
+    "base_triangles": 24330.0,
+    "budget": 28000.0,
+    "id": "treasure_chest",
+    "source_triangles": 103330.0
+  },
+  {
+    "baked_ceiling": 28000.0,
+    "baked_triangles": 21404,
+    "base_triangles": 12170.0,
+    "budget": 28000.0,
+    "id": "GothicCabinet_01",
+    "source_triangles": 12170.0
+  },
+  {
+    "baked_ceiling": 28000.0,
+    "base_triangles": 19992.0,
+    "budget": 28000.0,
+    "id": "WoodenChair_01",
+    "source_triangles": 19992.0
+  },
+  {
+    "baked_ceiling": 14000.0,
+    "baked_triangles": 10950,
+    "base_triangles": 10946.0,
+    "budget": 14000.0,
+    "id": "wooden_stool_01",
+    "source_triangles": 10946.0
+  },
+  {
+    "baked_ceiling": 14000.0,
+    "base_triangles": 7244.0,
+    "budget": 14000.0,
+    "id": "wine_bottles_01",
+    "source_triangles": 28848.0
+  },
+  {
+    "baked_ceiling": 14000.0,
+    "base_triangles": 5770.0,
+    "budget": 14000.0,
+    "id": "jug_01",
+    "source_triangles": 5770.0
+  },
+  {
+    "baked_ceiling": 14000.0,
+    "base_triangles": 7208.0,
+    "budget": 14000.0,
+    "id": "vintage_oil_lamp",
+    "source_triangles": 7208.0
+  },
+  {
+    "baked_ceiling": 14000.0,
+    "base_triangles": 4031.0,
+    "budget": 14000.0,
+    "id": "wooden_handle_saber",
+    "source_triangles": 4031.0
+  },
+  {
+    "baked_ceiling": 28000.0,
+    "base_triangles": 20720.0,
+    "budget": 28000.0,
+    "id": "cannon_01",
+    "source_triangles": 41444.0
+  },
+  {
+    "baked_ceiling": 28000.0,
+    "base_triangles": 16570.0,
+    "budget": 28000.0,
+    "id": "wooden_barrels_01",
+    "source_triangles": 33142.0
+  },
+  {
+    "baked_ceiling": 28000.0,
+    "base_triangles": 6576.0,
+    "budget": 28000.0,
+    "id": "wooden_crate_01",
+    "source_triangles": 6576.0
+  },
+  {
+    "baked_ceiling": 14000.0,
+    "base_triangles": 5116.0,
+    "budget": 14000.0,
+    "id": "wooden_bucket_01",
+    "source_triangles": 5116.0
+  },
+  {
+    "baked_ceiling": 14000.0,
+    "base_triangles": 8321.0,
+    "budget": 14000.0,
+    "id": "wooden_lantern_01",
+    "source_triangles": 8321.0
+  }
+]

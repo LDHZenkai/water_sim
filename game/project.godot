@@ -1,0 +1,28 @@
+config_version=5
+
+[application]
+config/name="Pirate Ship"
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.7", "Mobile")
+
+[autoload]
+PerfEvents="*res://autoloads/perf_events.gd"
+SimClock="*res://autoloads/sim_clock.gd"
+LightingRig="*res://autoloads/lighting_rig.gd"
+Quality="*res://autoloads/quality.gd"
+
+[display]
+window/size/viewport_width=1920
+window/size/viewport_height=1080
+
+[rendering]
+renderer/rendering_method="mobile"
+textures/default_filters/use_nearest_mipmap_filter=false
+
+textures/default_filters/anisotropic_filtering_level=1
+lights_and_shadows/directional_shadow/soft_shadow_filter_quality=1
+lights_and_shadows/positional_shadow/soft_shadow_filter_quality=1
+
+[physics]
+common/physics_interpolation=true
+3d/physics_engine="GodotPhysics3D"

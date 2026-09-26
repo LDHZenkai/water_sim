@@ -1,0 +1,6 @@
+# Godot import cache (regenerated on first open)
+game/.godot/
+
+# Godot engine binaries (godot.exe is 180 MB, over GitHub's 100 MB limit)
+godot.exe
+godot_console.exe

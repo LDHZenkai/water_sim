@@ -1,0 +1,14 @@
+{
+	"rays_per_view": 57600,
+	"total_triangles": 68984,
+	"triangle_indices": [
+		42968,
+		15798,
+		63173,
+		39294,
+		43149,
+		42970
+	],
+	"two_sided_triangles": 6,
+	"views": 12
+}
