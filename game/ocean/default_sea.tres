@@ -13,5 +13,4 @@ swell_spread = 0.15
 swell_enhancement = 5.0
 choppiness = 0.85
 split_wavelength = 12.0
-current = Vector2(-3.086664, 0)
 noise_seed = 1729

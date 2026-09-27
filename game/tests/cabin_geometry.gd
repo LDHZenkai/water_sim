@@ -56,7 +56,7 @@ func run() -> void:
   for x in [-12.12,-10.5,-8.94]:
    for z in [-0.7,0.1,0.9]:
     var floor_point: Vector3=pose*Vector3(x,world.cabin.FLOOR,z)
-    var water: Vector3=profile.surface(floor_point.x,floor_point.z,time,32).position
+    var water: Vector3=profile.surface(floor_point.x,floor_point.z,time,32,motion.drift).position
     clearance=minf(clearance,(pose.affine_inverse()*floor_point).y-(pose.affine_inverse()*water).y)
  print("CABIN floor minimum water clearance (120 s, 32 waves): ",clearance," m")
  raw.free()

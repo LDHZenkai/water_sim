@@ -15,7 +15,7 @@ func _ready() -> void:
 			tier = value
 		elif key == "expect":
 			requested_size = Vector2i(int(value.get_slice("x", 0)), int(value.get_slice("x", 1)))
-		elif key in ["rigging-material","deck-props", "rigging-climb-debug", "interactables", "dynres", "cabin-bake", "cabin-props", "cabin-shadows", "cabin-triplanar", "cabin-shell", "cabin-lights", "cabin-occluder", "stairs", "collision-debug", "msaa", "glow", "render-scale", "fsr", "shadow-quality", "sun-energy", "exposure", "ocean", "ocean-waves", "ocean-grid", "ocean-order", "ocean-clip", "ocean-shader", "ocean-debug", "ocean-fft", "ocean-wake", "ship-speed", "hull-cull", "fog", "aniso", "shadows", "rigging"]: 
+		elif key in ["rigging-material","deck-props", "rigging-climb-debug", "interactables", "dynres", "cabin-bake", "cabin-props", "cabin-shadows", "cabin-triplanar", "cabin-shell", "cabin-lights", "cabin-occluder", "stairs", "collision-debug", "msaa", "glow", "render-scale", "fsr", "shadow-quality", "sun-energy", "exposure", "ocean", "ocean-waves", "ocean-grid", "ocean-order", "ocean-clip", "ocean-shader", "ocean-debug", "ocean-fft", "ocean-wake", "ship-speed", "sails", "hull-cull", "fog", "aniso", "shadows", "rigging"]: 
 			overrides[key] = value
 	if tier not in ["low", "high"]:
 		push_error("Unknown quality: " + tier)
@@ -35,7 +35,7 @@ func _ready() -> void:
 	if overrides.get("ocean", "on") not in ["on", "off"]:
 		push_error("Ocean must be on or off")
 		get_tree().quit(2)
-	var choices_by_key := {"rigging-material":["opaque","legacy"],"deck-props":["on","off"], "rigging-climb-debug":["on","off","volumes"], "interactables":["on","off"], "dynres": ["on", "off"], "cabin-bake": ["on", "off"], "cabin-props": ["on", "off", "lite"], "cabin-shadows": ["on", "off"], "cabin-triplanar": ["on", "off"], "cabin-shell": ["on", "off"], "cabin-lights": ["on", "off"], "cabin-occluder": ["on", "off"], "stairs": ["on", "off"], "collision-debug": ["off", "on"], "ocean-debug": ["off", "rings"], "hull-cull": ["back", "disabled"], "fog": ["on", "off"], "aniso": ["1", "4", "16"], "shadows": ["on", "off"], "rigging": ["on", "off"], "ocean-order": ["before", "after"], "ocean-fft": ["on", "off"], "ocean-wake": ["on", "off"], "ocean-clip": ["discard", "occluder", "off"], "ocean-shader": ["low", "high"]}
+	var choices_by_key := {"rigging-material":["opaque","legacy"],"deck-props":["on","off"], "rigging-climb-debug":["on","off","volumes"], "interactables":["on","off"], "dynres": ["on", "off"], "cabin-bake": ["on", "off"], "cabin-props": ["on", "off", "lite"], "cabin-shadows": ["on", "off"], "cabin-triplanar": ["on", "off"], "cabin-shell": ["on", "off"], "cabin-lights": ["on", "off"], "cabin-occluder": ["on", "off"], "stairs": ["on", "off"], "collision-debug": ["off", "on"], "ocean-debug": ["off", "rings"], "hull-cull": ["back", "disabled"], "fog": ["on", "off"], "aniso": ["1", "4", "16"], "shadows": ["on", "off"], "rigging": ["on", "off"], "ocean-order": ["before", "after"], "ocean-fft": ["on", "off"], "ocean-wake": ["on", "off"], "sails": ["0", "1", "2", "3"], "ocean-clip": ["discard", "occluder", "off"], "ocean-shader": ["low", "high"]}
 	for key in choices_by_key:
 		var choices: Array = choices_by_key[key]
 		if key in overrides and overrides[key] not in choices:
@@ -97,9 +97,10 @@ func ocean_settings() -> Dictionary:
 		"ocean-wake": overrides.get("ocean-wake","on"),
 		"ocean-wake-size": 256 if tier=="high" else 128,
 		"ocean-wake-extent": 128.0 if tier=="high" else 96.0,
-		# Knots through the water; the sea streams past the hull (Galilean frame).
-		# 0 anchors the ship. Keep default_sea.tres current in step.
-		"ship-speed": float(overrides.get("ship-speed",6.0)),
+		# Starting sail (0 furled .. 3 full) and speed in knots; -1 = the steady
+		# speed the wind gives that sail. --ship-speed=0 starts furled and still.
+		"sails": int(overrides.get("sails", 0 if str(overrides.get("ship-speed", "")).is_valid_float() and float(overrides["ship-speed"]) == 0.0 else 3)),
+		"ship-speed": float(overrides.get("ship-speed", -1.0)),
 		"ocean-order": overrides.get("ocean-order","after"),
 		"ocean-clip": overrides.get("ocean-clip","occluder"),
 		# Claude, 2026-09-25: the full-lit ("high") ocean shader measured the same cost as

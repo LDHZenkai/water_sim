@@ -34,8 +34,6 @@ const MAX_LONG_WAVES := 64
 @export var choppiness := 0.85
 ## Waves at least this long are explicit components (CPU and vertex shader).
 @export var split_wavelength := 12.0
-## Water velocity past the ship, m/s (Galilean frame: a ship making way).
-@export var current := Vector2.ZERO
 @export var noise_seed := 1729
 
 var _tables := {}
@@ -223,9 +221,10 @@ static func _normal_quantile(u: float) -> float:
  return signf(x)*sqrt(2.0)*sqrt(sqrt(first*first-ln/a)-first)
 
 ## Per-component phase offsets at time t, wrapped in double precision so the
-## GPU never evaluates sin() of a large float. Includes the current (a
-## Galilean shift of the whole wave field past the ship).
-func phases(time: float, count: int) -> PackedFloat32Array:
+## GPU never evaluates sin() of a large float. drift is how far the water has
+## moved relative to the ship's frame (buoyancy.gd): the whole wave field is
+## carried past the hull with it.
+func phases(time: float, count: int, drift := Vector2.ZERO) -> PackedFloat32Array:
  var table := long_waves(count)
  var result := PackedFloat32Array()
  result.resize(MAX_LONG_WAVES)
@@ -234,10 +233,10 @@ func phases(time: float, count: int) -> PackedFloat32Array:
  var omega: PackedFloat64Array = table.omega
  var phase: PackedFloat64Array = table.phase
  for i in range(kx.size()):
-  result[i] = fposmod(phase[i]-(omega[i]+kx[i]*current.x+kz[i]*current.y)*time,TAU)
+  result[i] = fposmod(phase[i]-omega[i]*time-kx[i]*drift.x-kz[i]*drift.y,TAU)
  return result
 
-func _phases64(table: Dictionary, time: float) -> PackedFloat64Array:
+func _phases64(table: Dictionary, time: float, drift: Vector2) -> PackedFloat64Array:
  var kx: PackedFloat64Array = table.kx
  var kz: PackedFloat64Array = table.kz
  var omega: PackedFloat64Array = table.omega
@@ -245,7 +244,7 @@ func _phases64(table: Dictionary, time: float) -> PackedFloat64Array:
  var result := PackedFloat64Array()
  result.resize(kx.size())
  for i in range(kx.size()):
-  result[i] = fposmod(phase[i]-(omega[i]+kx[i]*current.x+kz[i]*current.y)*time,TAU)
+  result[i] = fposmod(phase[i]-omega[i]*time-kx[i]*drift.x-kz[i]*drift.y,TAU)
  return result
 
 ## Lagrangian forward map at the undisplaced point q. Returns
@@ -277,9 +276,9 @@ func _sample(table: Dictionary, offsets: PackedFloat64Array, q: Vector2) -> Pack
  return r
 
 ## Forward map as a dictionary (position of the displaced point and normal).
-func displacement(q: Vector2, time: float, count: int) -> Dictionary:
+func displacement(q: Vector2, time: float, count: int, drift := Vector2.ZERO) -> Dictionary:
  var table := long_waves(count)
- var r := _sample(table,_phases64(table,time),q)
+ var r := _sample(table,_phases64(table,time,drift),q)
  return {"position":Vector3(q.x+r[0],r[1],q.y+r[2]),"normal":_normal(r)}
 
 static func _normal(r: PackedFloat64Array) -> Vector3:
@@ -289,9 +288,9 @@ static func _normal(r: PackedFloat64Array) -> Vector3:
 
 ## Surface through the world point (x, z) at time t: Newton inversion of the
 ## horizontal Lagrangian map with its exact 2x2 Jacobian.
-func surface(x: float, z: float, time: float, count: int = 32) -> Dictionary:
+func surface(x: float, z: float, time: float, count: int = 32, drift := Vector2.ZERO) -> Dictionary:
  var table := long_waves(count)
- var offsets := _phases64(table,time)
+ var offsets := _phases64(table,time,drift)
  var target := Vector2(x,z)
  var q := target
  var r: PackedFloat64Array
@@ -310,9 +309,9 @@ func surface(x: float, z: float, time: float, count: int = 32) -> Dictionary:
 
 ## Batched heights for buoyancy probes (two Newton steps; sub-mm here because
 ## the long band is gentle). One pass over the components per iteration.
-func heights(points: PackedVector2Array, time: float, count: int) -> PackedFloat64Array:
+func heights(points: PackedVector2Array, time: float, count: int, drift := Vector2.ZERO) -> PackedFloat64Array:
  var table := long_waves(count)
- var offsets := _phases64(table,time)
+ var offsets := _phases64(table,time,drift)
  var kx: PackedFloat64Array = table.kx
  var kz: PackedFloat64Array = table.kz
  var amplitude: PackedFloat64Array = table.amplitude

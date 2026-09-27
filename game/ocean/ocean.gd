@@ -17,6 +17,8 @@ var ship: AnimatableBody3D
 var material := ShaderMaterial.new()
 var fft: RefCounted
 var wake: RefCounted
+## Ship motion (buoyancy.gd): supplies the water's drift past the hull.
+var motion: RefCounted
 var settings: Dictionary = {}
 var _last_render_time := NAN
 
@@ -138,12 +140,13 @@ func _process(_delta: float) -> void:
   var snap := 400.0/pow(float(grid/2-4),1.6)
   global_position = Vector3(snappedf(eye.x,snap),0,snappedf(eye.z,snap))
  var time: float = get_node("/root/SimClock").render_time()
+ var water_drift := render_drift()
  material.set_shader_parameter("sim_time", time)
- material.set_shader_parameter("long_phases", SEA.phases(time, wave_count))
+ material.set_shader_parameter("long_phases", SEA.phases(time, wave_count, water_drift))
  if fft:
   var dt := 0.0 if is_nan(_last_render_time) else time-_last_render_time
   fft.update(time, dt if dt >= 0.0 else -1.0)
-  var offsets: PackedVector2Array = fft.shader_offsets(time)
+  var offsets: PackedVector2Array = fft.shader_offsets(water_drift)
   for i in range(offsets.size()):
    material.set_shader_parameter("cascade_offset%d" % i, offsets[i])
  _last_render_time = time
@@ -156,7 +159,7 @@ func _process(_delta: float) -> void:
 func _physics_process(delta: float) -> void:
  # World (priority -50) has already posed the hull for this tick.
  if wake and ship and not get_node("/root/SimClock").frozen:
-  wake.step(ship.global_transform, get_node("/root/SimClock").time, delta)
+  wake.step(ship.global_transform, get_node("/root/SimClock").time, delta, drift(), current())
 
 ## Callable for buoyancy.pose_at(): replays the hull's last seconds into the
 ## wave simulation so a frozen capture shows its real, settled wake.
@@ -165,14 +168,28 @@ func wake_replay(time: float) -> Callable:
  wake.reset()
  var parent := get_parent() as Node3D
  return func(pose: Transform3D, t: float, dt: float) -> void:
-  if t > time-WAKE_REPLAY: wake.step(parent.global_transform*pose, t, dt)
+  if t > time-WAKE_REPLAY: wake.step(parent.global_transform*pose, t, dt, drift(), current())
 
 ## A splash in the reactive simulation (no-op without a RenderingDevice).
 func disturb(point: Vector3, radius: float, depth: float) -> void:
  if wake: wake.disturb(point, radius, depth)
 
+## Water displacement past the ship at the current physics tick.
+func drift() -> Vector2:
+ return motion.drift if motion else Vector2.ZERO
+
+## Water velocity past the ship.
+func current() -> Vector2:
+ return motion.water_velocity() if motion else Vector2.ZERO
+
+## Drift between physics ticks, matching the interpolated render time.
+func render_drift() -> Vector2:
+ if motion == null: return Vector2.ZERO
+ if get_node("/root/SimClock").frozen: return motion.drift
+ return motion.drift_at(Engine.get_physics_interpolation_fraction())
+
 func surface_at(p: Vector3) -> float:
- return SEA.surface(p.x,p.z,get_node("/root/SimClock").time,wave_count).position.y
+ return SEA.surface(p.x,p.z,get_node("/root/SimClock").time,wave_count,drift()).position.y
 
 func build_hull_mask(hull: MeshInstance3D, source_mesh: Mesh = null) -> void:
  # Rasterize hull triangles in ship XY; retain Z interval at each texel.

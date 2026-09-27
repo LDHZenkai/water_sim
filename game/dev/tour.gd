@@ -1,6 +1,7 @@
 extends Node3D
 ## Each shot freezes the shared clock and integrates the hull to that exact time.
 const SHOTS := [
+ {"name":"23_at_the_helm","eye":Vector3(-11.0,10.2,0.0),"target":Vector3(10,6.5,0),"fov":70.0,"ship":true},
  {"name":"20_sea_from_fighting_top","eye":Vector3(0.12,16.83,0.1),"target":Vector3(-6,-2,26),"fov":62.0,"ship":true},
  {"name":"21_bow_waterline","eye":Vector3(24,2.2,9),"target":Vector3(8,0.2,0),"fov":48.0,"ship":true},
  {"name":"22_stern_wake","eye":Vector3(-34,13,16),"target":Vector3(-12,0,0),"fov":55.0,"ship":true},
@@ -91,4 +92,7 @@ func _ready() -> void:
 	$World.interactables.lid.rotation.x=deg_to_rad(-105) if name=="18_chest_open" else 0.0
 	$World.interactables.raised=name=="19_compass_held"
 	$World.interactables._process(1.0)
+	if name == "23_at_the_helm":
+		$World.helm.panel.visible = true
+		$World.helm.readout.text = $World.helm.describe()
 	print("TOUR: ", data.name, " seed=1729 sim_time=", get_node("/root/SimClock").time, "; viewport=", get_viewport().get_visible_rect().size)

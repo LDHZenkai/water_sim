@@ -95,12 +95,12 @@ func _run() -> void:
 const SEA = preload("res://ocean/default_sea.tres")
 # Independent forward sum and finite-difference Newton inverse over the raw
 # component table, deliberately not using SEA.displacement/_sample.
-func reference_forward(q: Vector2, time: float, count: int) -> Vector3:
+func reference_forward(q: Vector2, time: float, count: int, drift := Vector2(3.7, -1.9)) -> Vector3:
 	var table: Dictionary = SEA.long_waves(count)
 	var p := Vector3(q.x,0,q.y)
 	for i in range(table.count):
 		var k := Vector2(table.kx[i],table.kz[i])
-		var angle: float = k.dot(q)+table.phase[i]-(table.omega[i]+k.dot(SEA.current))*time
+		var angle: float = k.dot(q-drift)+table.phase[i]-table.omega[i]*time
 		var direction := k.normalized()
 		p.x += table.horizontal[i]*direction.x*cos(angle)
 		p.z += table.horizontal[i]*direction.y*cos(angle)
@@ -144,8 +144,8 @@ func _test_waves() -> void:
 				q -= Vector2(dz.z*error.x-dz.x*error.y,-dx.z*error.x+dx.x*error.y)/determinant
 			var reference := reference_forward(q,time,count)
 			var normal := (reference_forward(q+Vector2(0,0.01),time,count)-reference_forward(q-Vector2(0,0.01),time,count)).cross(reference_forward(q+Vector2(0.01,0),time,count)-reference_forward(q-Vector2(0.01,0),time,count)).normalized()
-			var actual: Dictionary = SEA.surface(target.x,target.y,time,count)
-			var batch: PackedFloat64Array = SEA.heights(PackedVector2Array([target]),time,count)
+			var actual: Dictionary = SEA.surface(target.x,target.y,time,count,Vector2(3.7,-1.9))
+			var batch: PackedFloat64Array = SEA.heights(PackedVector2Array([target]),time,count,Vector2(3.7,-1.9))
 			max_height_error = maxf(max_height_error,absf(actual.position.y-reference.y))
 			max_batch_error = maxf(max_batch_error,absf(batch[0]-reference.y))
 			max_normal_error = maxf(max_normal_error,actual.normal.distance_to(normal))

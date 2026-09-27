@@ -191,17 +191,16 @@ func _synthesise(time: float, dt: float, mips: bool) -> void:
   rd.compute_list_end()
 
 ## Scale (1/tile) and sampling offset of each cascade for the ocean shader.
-## The offset moves the pattern with the current (a ship making way).
+## The offset carries the pattern with the water drifting past the ship.
 func shader_scales() -> PackedFloat32Array:
  var result := PackedFloat32Array()
  for size in SIZES: result.append(1.0/size)
  return result
 
-func shader_offsets(time: float) -> PackedVector2Array:
+func shader_offsets(drift: Vector2) -> PackedVector2Array:
  var result := PackedVector2Array()
  for size in SIZES:
-  var shift: Vector2 = sea.current*time
-  result.append(Vector2(fposmod(shift.x,size),fposmod(shift.y,size)))
+  result.append(Vector2(fposmod(drift.x,size),fposmod(drift.y,size)))
  return result
 
 ## Synchronous readback of one cascade (tests only: stalls the GPU).

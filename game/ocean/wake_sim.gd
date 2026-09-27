@@ -33,6 +33,7 @@ var _chop_scales := PackedFloat32Array()
 var _chop_sizes := PackedFloat32Array()
 var _queue: Array[PackedByteArray] = []
 var _queue_meta: Array[Vector4] = []
+var _queue_current: Array[Vector2] = []
 var _impulses: Array[Vector4] = []
 var _first := true
 var _foam_index := 0
@@ -147,9 +148,8 @@ func _create() -> void:
 
 ## Domain placement: centred on the ship, pushed downstream so the wake has
 ## room, snapped to whole texels so the field shifts without resampling.
-func _corner_for(ship_global: Transform3D) -> Vector2:
+func _corner_for(ship_global: Transform3D, current: Vector2) -> Vector2:
  var center := Vector2(ship_global.origin.x,ship_global.origin.z)
- var current: Vector2 = sea.current
  if current.length() > 0.01:
   center += current.normalized()*size*0.22
  return Vector2(floor((center.x-size*0.5)/texel)*texel,floor((center.y-size*0.5)/texel)*texel)
@@ -159,9 +159,10 @@ static func _mat4(transform: Transform3D) -> PackedFloat32Array:
  var o := transform.origin
  return PackedFloat32Array([b.x.x,b.x.y,b.x.z,0.0,b.y.x,b.y.y,b.y.z,0.0,b.z.x,b.z.y,b.z.z,0.0,o.x,o.y,o.z,1.0])
 
-## Queue one physics tick with the hull's global pose at time.
-func step(ship_global: Transform3D, time: float, dt: float) -> void:
- var next_corner := _corner_for(ship_global)
+## Queue one physics tick with the hull's global pose at time. drift is how
+## far the water has moved past the ship (buoyancy.gd), current its velocity.
+func step(ship_global: Transform3D, time: float, dt: float, drift := Vector2.ZERO, current := Vector2.ZERO) -> void:
+ var next_corner := _corner_for(ship_global, current)
  var shift := Vector2i(0,0)
  if not _first:
   shift = Vector2i(roundi((next_corner.x-corner.x)/texel),roundi((next_corner.y-corner.y)/texel))
@@ -170,7 +171,6 @@ func step(ship_global: Transform3D, time: float, dt: float) -> void:
  floats.append_array(_mat4(ship_global.affine_inverse()))
  floats.append_array(_mat4(ship_global))
  floats.append_array([corner.x,corner.y,texel,float(n)])
- var current: Vector2 = sea.current
  floats.append_array([current.x,current.y,dt,2.0 if _first else 0.0])
  var bytes := floats.to_byte_array()
  var table: Dictionary = sea.long_waves(count)
@@ -181,8 +181,7 @@ func step(ship_global: Transform3D, time: float, dt: float) -> void:
  var chop := PackedFloat32Array()
  for c in range(2):
   if _chop_rid.is_valid():
-   var offset: Vector2 = current*time
-   chop.append_array([1.0/_chop_sizes[c],fposmod(offset.x,_chop_sizes[c]),fposmod(offset.y,_chop_sizes[c]),1.0])
+   chop.append_array([1.0/_chop_sizes[c],fposmod(drift.x,_chop_sizes[c]),fposmod(drift.y,_chop_sizes[c]),1.0])
   else:
    chop.append_array([0.0,0.0,0.0,0.0])
  for i in range(MAX_IMPULSES):
@@ -192,11 +191,12 @@ func step(ship_global: Transform3D, time: float, dt: float) -> void:
  for i in range(sea.MAX_LONG_WAVES):
   var w: Vector4 = waves[i] if i < waves.size() else Vector4.ZERO
   chop.append_array([w.x,w.y,w.z,w.w])
- chop.append_array(sea.phases(time,count))
+ chop.append_array(sea.phases(time,count,drift))
  bytes.append_array(chop.to_byte_array())
  assert(bytes.size() == STEP_BYTES)
  _queue.append(bytes)
  _queue_meta.append(Vector4(dt,float(shift.x),float(shift.y),0))
+ _queue_current.append(current)
  _first = false
 
 ## A splash: the surface is punched down by depth (m) over radius (m).
@@ -208,26 +208,29 @@ func reset() -> void:
  _first = true
  _queue.clear()
  _queue_meta.clear()
+ _queue_current.clear()
 
 ## Run every queued step on the render thread, then rebuild the mips.
 func flush() -> void:
  if _queue.is_empty(): return
  var steps := _queue.duplicate()
  var meta := _queue_meta.duplicate()
+ var currents := _queue_current.duplicate()
  _queue.clear()
  _queue_meta.clear()
- RenderingServer.call_on_render_thread(_run.bind(steps,meta))
+ _queue_current.clear()
+ RenderingServer.call_on_render_thread(_run.bind(steps,meta,currents))
 
-func _run(steps: Array[PackedByteArray], meta: Array[Vector4]) -> void:
+func _run(steps: Array[PackedByteArray], meta: Array[Vector4], currents: Array[Vector2]) -> void:
  if rd == null: return
  var groups := ceili(n/8.0)
- var current: Vector2 = sea.current
  # Grid-scale damping only: Nyquist decays over ~10 s. The exact propagator
  # is stable without it, and more would erode the hull's static depression.
  var viscosity := texel*texel/(PI*PI*10.0)
  for i in range(steps.size()):
   rd.buffer_update(_step_buffer,0,STEP_BYTES,steps[i])
   var dt := meta[i].x
+  var current := currents[i]
   var list := rd.compute_list_begin()
   rd.compute_list_bind_compute_pipeline(list,_pipelines.wake_force.pipeline)
   rd.compute_list_bind_uniform_set(list,_force_set,0)

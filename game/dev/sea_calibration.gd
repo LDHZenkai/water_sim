@@ -2,18 +2,22 @@ extends SceneTree
 ## Try a sea state before committing it to default_sea.tres: prints the
 ## significant height, the long-wave components and the ship's peak pitch and
 ## roll over 120 s (the waterline tests allow pitch <= 4 and roll <= 3 deg).
-##   godot --headless --path game -s res://dev/sea_calibration.gd -- --wind_speed=10 --swell_height=3 --knots=6
-## Any exported sea_state.gd property can be overridden; --knots sets the current.
+##   godot --headless --path game -s res://dev/sea_calibration.gd -- --wind_speed=10 --swell_height=3 --sails=3
+## Any exported sea_state.gd property can be overridden; --sails (0..3) and
+## --heading (degrees, 0 = east, positive to port) set how the ship sails.
 
 func _initialize() -> void:
  var sea = load("res://ocean/default_sea.tres")
+ var sails := 3
+ var heading := 0.0
  for arg in OS.get_cmdline_user_args():
   var key := arg.get_slice("=",0).trim_prefix("--")
   var value := arg.get_slice("=",1)
-  if key == "knots": sea.current = Vector2(-float(value)*0.514444, 0.0)
+  if key == "sails": sails = int(value)
+  elif key == "heading": heading = deg_to_rad(float(value))
   elif key in sea: sea.set(key, float(value))
   else: push_warning("Unknown sea property: " + key)
- print("Hs total=", sea.significant_height(), " m; wind peak period=", TAU/sea.wind_peak(), " s (wavelength ", TAU*9.81/pow(sea.wind_peak(),2), " m); current=", sea.current)
+ print("Hs total=", sea.significant_height(), " m; wind peak period=", TAU/sea.wind_peak(), " s (wavelength ", TAU*9.81/pow(sea.wind_peak(),2), " m)")
  for count in [24, 32]:
   var table: Dictionary = sea.long_waves(count)
   var variance := 0.0
@@ -24,6 +28,10 @@ func _initialize() -> void:
   lengths.sort()
   print(count, " long components: Hs(long band)=", 4.0*sqrt(variance), " m; wavelengths=", lengths)
   var motion = preload("res://ocean/buoyancy.gd").new()
+  motion.start_sail = sails
+  motion.start_heading = heading
+  motion.reset_navigation()
+  if count == 24: print("Sailing at ", motion.knots(), " knots")
   var pitch := 0.0
   var roll := 0.0
   var start := Time.get_ticks_msec()

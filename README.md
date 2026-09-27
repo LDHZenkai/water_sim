@@ -17,6 +17,25 @@ texture packs: every wave comes from a measured ocean wave spectrum.
 | Reactive water | Exact-dispersion wave solver (Tessendorf's eWave) in a 128 m box around the ship. The hull presses on the water by its draft below the passing waves. Heave, pitch, roll and chop along the hull radiate real waves; a current draws a Kelvin wake; splashes ring outward. Foam is carried by the flow | `ocean/wake_sim.gd`, `ocean/compute/wake_*.glsl` |
 | Optics | Fresnel sky reflection. Sun glitter roughness from the slope variance hidden in each pixel (LEAN mapping plus the Cox-Munk remainder). Water colour from absorption and backscatter coefficients. Crest glow from forward-scattered sunlight | `ocean/water.gdshaderinc`, `ocean/ocean.gdshader` |
 
+### Sailing the ship
+
+Climb to the poop deck, look at the wheel and press **E** to take the helm.
+
+| Key | At the helm |
+| --- | --- |
+| A / D | Put the helm over to port / starboard; the wheel drifts back amidships when released |
+| W / S | Set / take in sail: furled, reefed, working, full |
+| E | Step away from the helm |
+
+The ship is driven by the sea state's wind (`ocean/buoyancy.gd`):
+- **Sails:** square-rig driving force comes from the apparent wind. There is nothing within about 60° of the true wind, drive is weak abeam, and the ship is fastest with the wind on the quarter. In the default 8 m/s wind that gives about 6 kn on a beam reach and 7 kn on a broad reach.
+- **Hull:** a few hundred tonnes of galleon, so it takes half a minute to gather way. Hull drag and turning slow it down.
+- **Rudder:** it only bites with way on. Full rudder turns about 2°/s, a circle of roughly four hull lengths.
+
+The readout shows speed, compass heading, sail, rudder and where the wind is coming from.
+
+Physically, the hull stays at the world origin and the whole sea drifts past it: long waves, FFT cascades and the wake simulation. That keeps every coordinate small however far you sail, and the reactive wake still trails and curves behind the ship as it turns.
+
 ### Changing the sea
 
 Open `game/ocean/default_sea.tres` in the Godot inspector. Wind speed, fetch,
@@ -27,11 +46,12 @@ pitch to 4° and roll to 3° for the default sea.
 
 ### Command-line switches
 
-Pass these after `--`, for example `godot --path game -- --ship-speed=5`.
+Pass these after `--`, for example `godot --path game -- --sails=2`.
 
 | Switch | Effect |
 | --- | --- |
-| `--ship-speed=6` | Knots through the water, 0..12 (default 6; 0 anchors the ship). The sea streams past the hull, which makes a bow wave, Kelvin wake and turbulent stern wake |
+| `--sails=3` | Starting sail, 0..3 (furled .. full, default full) |
+| `--ship-speed=0` | Starting speed in knots, 0..12. 0 starts furled and still. Default: the steady speed for the starting sail |
 | `--ocean-fft=off` | Disable the GPU FFT cascades (legacy detail maps) |
 | `--ocean-wake=off` | Disable the reactive wave simulation |
 | `--ocean-waves=32` | Long-wave component count (8..64) |
@@ -45,6 +65,7 @@ still run.
 
 ```
 godot --headless --path game -s tests/run_tests.gd   # main suite
+godot --headless --path game -s res://tests/helm.gd  # sailing physics and the helm
 godot --path game -s res://tests/gpu_ocean.gd         # GPU physics (needs a window)
 ```
 

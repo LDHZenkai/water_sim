@@ -31,6 +31,8 @@ var released_route: Dictionary={}
 var climb_query: Callable
 var deck_pose: Callable
 var auto_duck := false
+## Standing at the ship's wheel (exploration/helm.gd): WASD steer, not walk.
+var at_helm := false
 var in_climb_volume := false
 var standing_shape := CapsuleShape3D.new()
 var standing_query := PhysicsShapeQueryParameters3D.new()
@@ -104,6 +106,8 @@ func _physics_process(delta: float) -> void:
 	var axis := move_input if test_input else Vector2.ZERO
 	if captured and not test_input:
 		axis = Input.get_vector("move_left", "move_right", "move_forward", "move_back")
+	if at_helm:
+		axis = Vector2.ZERO
 	floor_stop_on_slope = axis.is_zero_approx()
 	var crouched := test_crouch if test_input else captured and Input.is_action_pressed("crouch")
 	# The low, original arched passage is the only automatic stoop volume.

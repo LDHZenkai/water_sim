@@ -19,14 +19,18 @@ var rigging_climb: Node3D
 var exterior_shadow_distance := 50.0
 var decks: Node3D
 var buoyancy = preload("res://ocean/buoyancy.gd").new()
+var helm: Node3D
+var sails_mesh: MeshInstance3D
 
 func _ready() -> void:
 	seed(1729)
 	process_physics_priority = -50
-	# Ship making way along its bow (+X): the whole sea streams past at -speed.
-	var knots: float = get_node("/root/Quality").ocean_settings()["ship-speed"]
-	var sea: Resource = load("res://ocean/default_sea.tres")
-	sea.current = Vector2(-knots*0.514444, 0.0)
+	# Sailing: the hull stays at the origin and the sea drifts past it.
+	var ship_settings: Dictionary = get_node("/root/Quality").ocean_settings()
+	buoyancy.start_sail = ship_settings["sails"]
+	var knots: float = ship_settings["ship-speed"]
+	buoyancy.start_speed = knots*0.514444 if knots >= 0.0 else -1.0
+	buoyancy.reset_navigation()
 	_build_ship()
 	decks = preload("res://exploration/decks.gd").new()
 	decks.name = "Decks"
@@ -51,6 +55,10 @@ func _ready() -> void:
 	interactables=preload("res://exploration/interactables.gd").new()
 	interactables.build(cabin,deck_props,$Player)
 	ship_body.add_child(interactables)
+	helm=preload("res://exploration/helm.gd").new()
+	helm.name="Helm"
+	ship_body.add_child(helm)
+	helm.build(ship_body,$Player,buoyancy,interactables,deck_props.timber)
 	cabin_prewarm=preload("res://exploration/cabin_prewarm.gd").new()
 	cabin_prewarm.build(cabin,[deck_props,interactables,rigging_climb,ship_body.get_node("Model"),doors[0],doors[1]])
 	add_child(cabin_prewarm)
@@ -74,6 +82,7 @@ func _build_ship() -> void:
 	for mesh in model.find_children("*", "MeshInstance3D"):
 		var original = mesh.get_active_material(0)
 		if "sails" in mesh.name and original is StandardMaterial3D:
+			sails_mesh = mesh
 			var sails = original.duplicate()
 			# The supplied RGB JPEG has no alpha; MASK cannot cut any pixels.
 			sails.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
@@ -140,6 +149,7 @@ func _build_sea() -> void:
 	ocean = preload("res://ocean/ocean.gd").new()
 	ocean.name = "Ocean"
 	ocean.ship = ship_body
+	ocean.motion = buoyancy
 	add_child(ocean)
 	for mesh in ship_body.get_node("Model").find_children("*", "MeshInstance3D"):
 		if "hull" in mesh.name:
@@ -210,6 +220,8 @@ func _warm_main() -> void:
 		$Player.input_enabled=was_enabled
 
 func _process(_delta: float) -> void:
+	# Furled canvas: bare yards.
+	if sails_mesh: sails_mesh.visible = buoyancy.canvas > 0.02
 	var camera:=get_viewport().get_camera_3d()
 	if camera==null or cabin==null:return
 	var settings: Dictionary=get_node("/root/Quality").effective

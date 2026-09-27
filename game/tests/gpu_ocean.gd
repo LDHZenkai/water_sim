@@ -83,12 +83,11 @@ func _test_fft() -> void:
 
 ## Flat sea and a smooth parabolic hull (20 x 6 m, 2 m draft amidships,
 ## fine ends like a real hull) on a 128 m domain.
-func _wake(current: Vector2) -> Array:
+func _wake() -> Array:
  var sea = SeaState.new()
  sea.wind_speed = 0.5
  sea.fetch = 1000.0
  sea.swell_height = 0.0001
- sea.current = current
  var keel := PackedFloat32Array()
  for z in range(64):
   for x in range(192):
@@ -102,7 +101,7 @@ func _wake(current: Vector2) -> Array:
  return [wake, sea]
 
 func _test_wake() -> void:
- var made: Array = await _wake(Vector2.ZERO)
+ var made: Array = await _wake()
  var wake = made[0]
  var dt := 1.0/60.0
  var rest := Transform3D(Basis.IDENTITY, Vector3(0, -0.6, 0))
@@ -173,12 +172,13 @@ func _test_wake() -> void:
  wake.release()
  await process_frame
  # Current past a still hull: steady Kelvin wake, downstream only.
- made = await _wake(Vector2(-2.5, 0.0))
+ made = await _wake()
  wake = made[0]
  t = 0.0
+ var stream := Vector2(-2.5, 0.0)
  for i in range(int(40.0/dt)):
   t += dt
-  wake.step(rest, t, dt)
+  wake.step(rest, t, dt, stream*t, stream)
   if i % 60 == 0: wake.flush()
  wake.flush()
  await process_frame
