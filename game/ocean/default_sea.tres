@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="" load_steps=2 format=3]
+[ext_resource type="Script" path="res://ocean/sea_state.gd" id="1"]
+[resource]
+script = ExtResource("1")
+wind_speed = 8.0
+fetch = 30000.0
+wind_heading = 1.7
+peak_enhancement = 3.3
+swell_height = 2.4
+swell_period = 12.0
+swell_heading = 1.0
+swell_spread = 0.15
+swell_enhancement = 5.0
+choppiness = 0.85
+split_wavelength = 12.0
+current = Vector2(-3.086664, 0)
+noise_seed = 1729

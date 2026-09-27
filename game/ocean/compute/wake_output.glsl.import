@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://dw3r7retcnhr7"
+path="res://.godot/imported/wake_output.glsl-cca5e29b6c4631bae9686f4bf82d7bd0.res"
+
+[deps]
+
+source_file="res://ocean/compute/wake_output.glsl"
+dest_files=["res://.godot/imported/wake_output.glsl-cca5e29b6c4631bae9686f4bf82d7bd0.res"]
+
+[params]
+

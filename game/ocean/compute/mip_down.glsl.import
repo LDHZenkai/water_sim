@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://ci0sprmuj2lkc"
+path="res://.godot/imported/mip_down.glsl-6049a935ec581619b4852a95ad07b5e3.res"
+
+[deps]
+
+source_file="res://ocean/compute/mip_down.glsl"
+dest_files=["res://.godot/imported/mip_down.glsl-6049a935ec581619b4852a95ad07b5e3.res"]
+
+[params]
+

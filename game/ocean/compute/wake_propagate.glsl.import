@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://wp2jd6ssdw8y"
+path="res://.godot/imported/wake_propagate.glsl-29d21e1cde6a56728c073d8e3582b315.res"
+
+[deps]
+
+source_file="res://ocean/compute/wake_propagate.glsl"
+dest_files=["res://.godot/imported/wake_propagate.glsl-29d21e1cde6a56728c073d8e3582b315.res"]
+
+[params]
+

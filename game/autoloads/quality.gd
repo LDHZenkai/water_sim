@@ -15,7 +15,7 @@ func _ready() -> void:
 			tier = value
 		elif key == "expect":
 			requested_size = Vector2i(int(value.get_slice("x", 0)), int(value.get_slice("x", 1)))
-		elif key in ["rigging-material","deck-props", "rigging-climb-debug", "interactables", "dynres", "cabin-bake", "cabin-props", "cabin-shadows", "cabin-triplanar", "cabin-shell", "cabin-lights", "cabin-occluder", "stairs", "collision-debug", "msaa", "glow", "render-scale", "fsr", "shadow-quality", "sun-energy", "exposure", "ocean", "ocean-waves", "ocean-grid", "ocean-order", "ocean-clip", "ocean-shader", "ocean-debug", "hull-cull", "fog", "aniso", "shadows", "rigging"]: 
+		elif key in ["rigging-material","deck-props", "rigging-climb-debug", "interactables", "dynres", "cabin-bake", "cabin-props", "cabin-shadows", "cabin-triplanar", "cabin-shell", "cabin-lights", "cabin-occluder", "stairs", "collision-debug", "msaa", "glow", "render-scale", "fsr", "shadow-quality", "sun-energy", "exposure", "ocean", "ocean-waves", "ocean-grid", "ocean-order", "ocean-clip", "ocean-shader", "ocean-debug", "ocean-fft", "ocean-wake", "ship-speed", "hull-cull", "fog", "aniso", "shadows", "rigging"]: 
 			overrides[key] = value
 	if tier not in ["low", "high"]:
 		push_error("Unknown quality: " + tier)
@@ -25,14 +25,17 @@ func _ready() -> void:
 			var value := str(overrides[key])
 			var number := int(value)
 			var valid := value.is_valid_int()
-			valid = valid and (number >= 4 and number <= 8 if key == "ocean-waves" else number >= 32 and number <= 256 and number % 2 == 0)
+			valid = valid and (number >= 8 and number <= 64 if key == "ocean-waves" else number >= 32 and number <= 256 and number % 2 == 0)
 			if not valid:
 				push_error("Invalid " + key + ": " + value)
 				get_tree().quit(2)
+	if "ship-speed" in overrides and (not str(overrides["ship-speed"]).is_valid_float() or float(overrides["ship-speed"]) < 0.0 or float(overrides["ship-speed"]) > 12.0):
+		push_error("Ship speed must be 0..12 knots")
+		get_tree().quit(2)
 	if overrides.get("ocean", "on") not in ["on", "off"]:
 		push_error("Ocean must be on or off")
 		get_tree().quit(2)
-	var choices_by_key := {"rigging-material":["opaque","legacy"],"deck-props":["on","off"], "rigging-climb-debug":["on","off","volumes"], "interactables":["on","off"], "dynres": ["on", "off"], "cabin-bake": ["on", "off"], "cabin-props": ["on", "off", "lite"], "cabin-shadows": ["on", "off"], "cabin-triplanar": ["on", "off"], "cabin-shell": ["on", "off"], "cabin-lights": ["on", "off"], "cabin-occluder": ["on", "off"], "stairs": ["on", "off"], "collision-debug": ["off", "on"], "ocean-debug": ["off", "rings"], "hull-cull": ["back", "disabled"], "fog": ["on", "off"], "aniso": ["1", "4", "16"], "shadows": ["on", "off"], "rigging": ["on", "off"], "ocean-order": ["before", "after"], "ocean-clip": ["discard", "occluder", "off"], "ocean-shader": ["low", "high"]}
+	var choices_by_key := {"rigging-material":["opaque","legacy"],"deck-props":["on","off"], "rigging-climb-debug":["on","off","volumes"], "interactables":["on","off"], "dynres": ["on", "off"], "cabin-bake": ["on", "off"], "cabin-props": ["on", "off", "lite"], "cabin-shadows": ["on", "off"], "cabin-triplanar": ["on", "off"], "cabin-shell": ["on", "off"], "cabin-lights": ["on", "off"], "cabin-occluder": ["on", "off"], "stairs": ["on", "off"], "collision-debug": ["off", "on"], "ocean-debug": ["off", "rings"], "hull-cull": ["back", "disabled"], "fog": ["on", "off"], "aniso": ["1", "4", "16"], "shadows": ["on", "off"], "rigging": ["on", "off"], "ocean-order": ["before", "after"], "ocean-fft": ["on", "off"], "ocean-wake": ["on", "off"], "ocean-clip": ["discard", "occluder", "off"], "ocean-shader": ["low", "high"]}
 	for key in choices_by_key:
 		var choices: Array = choices_by_key[key]
 		if key in overrides and overrides[key] not in choices:
@@ -84,9 +87,19 @@ func ocean_settings() -> Dictionary:
 	return {
 		"ocean-debug": overrides.get("ocean-debug","off"),
 		"ocean": overrides.get("ocean","on"),
-		"ocean-waves": int(overrides.get("ocean-waves",8 if tier=="high" else 5)),
+		# Explicit long-wave components (sea_state.gd); the same sea on every tier.
+		"ocean-waves": int(overrides.get("ocean-waves",32)),
 		"ocean-grid": int(overrides.get("ocean-grid",192 if tier=="high" else 128)),
 		"ocean-detail-size": 256 if tier=="high" else 128,
+		# GPU FFT cascades and the reactive wave simulation around the ship.
+		"ocean-fft": overrides.get("ocean-fft","on"),
+		"ocean-fft-size": 256 if tier=="high" else 128,
+		"ocean-wake": overrides.get("ocean-wake","on"),
+		"ocean-wake-size": 256 if tier=="high" else 128,
+		"ocean-wake-extent": 128.0 if tier=="high" else 96.0,
+		# Knots through the water; the sea streams past the hull (Galilean frame).
+		# 0 anchors the ship. Keep default_sea.tres current in step.
+		"ship-speed": float(overrides.get("ship-speed",6.0)),
 		"ocean-order": overrides.get("ocean-order","after"),
 		"ocean-clip": overrides.get("ocean-clip","occluder"),
 		# Claude, 2026-09-25: the full-lit ("high") ocean shader measured the same cost as

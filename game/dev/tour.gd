@@ -1,6 +1,9 @@
 extends Node3D
 ## Each shot freezes the shared clock and integrates the hull to that exact time.
 const SHOTS := [
+ {"name":"20_sea_from_fighting_top","eye":Vector3(0.12,16.83,0.1),"target":Vector3(-6,-2,26),"fov":62.0,"ship":true},
+ {"name":"21_bow_waterline","eye":Vector3(24,2.2,9),"target":Vector3(8,0.2,0),"fov":48.0,"ship":true},
+ {"name":"22_stern_wake","eye":Vector3(-34,13,16),"target":Vector3(-12,0,0),"fov":55.0,"ship":true},
  {"name":"15_shroud_climb","eye":Vector3(-1.8442,11.615,1.8991),"target":Vector3(-1.1,16,0.8),"fov":70.0,"ship":true},
  {"name":"16_fighting_top_view","eye":Vector3(0.12,16.83,0.1),"target":Vector3(11,8,0),"fov":70.0,"ship":true},
  {"name":"17_deck_dressing","eye":Vector3(0.1,4.45,1.8),"target":Vector3(6,3.2,1.5),"fov":72.0,"ship":true},

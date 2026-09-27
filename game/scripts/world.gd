@@ -23,6 +23,10 @@ var buoyancy = preload("res://ocean/buoyancy.gd").new()
 func _ready() -> void:
 	seed(1729)
 	process_physics_priority = -50
+	# Ship making way along its bow (+X): the whole sea streams past at -speed.
+	var knots: float = get_node("/root/Quality").ocean_settings()["ship-speed"]
+	var sea: Resource = load("res://ocean/default_sea.tres")
+	sea.current = Vector2(-knots*0.514444, 0.0)
 	_build_ship()
 	decks = preload("res://exploration/decks.gd").new()
 	decks.name = "Decks"
@@ -54,6 +58,7 @@ func _ready() -> void:
 	$Player.global_position = ship_body.get_node("SpawnPoint").global_position
 	$Player.spawn_point = ship_body.get_node("SpawnPoint")
 	$Player.sea_height = ocean.surface_at
+	$Player.splashed.connect(func(): ocean.disturb($Player.global_position, 0.7, 0.6))
 	$Player.inside_hull = ocean.contains_point
 	$Player.deck = ship_body
 	$Player.deck_pose = func(): return global_transform * next_ship_pose
@@ -149,7 +154,7 @@ func freeze_at(time: float) -> void:
 	get_node("/root/SimClock").freeze(time)
 	# Capture placement is a teleport, not platform movement.
 	ship_body.sync_to_physics = false
-	next_ship_pose = buoyancy.pose_at(time, ocean.wave_count)
+	next_ship_pose = buoyancy.pose_at(time, ocean.wave_count, ocean.wake_replay(time))
 	ship_body.transform = next_ship_pose
 	ship_body.reset_physics_interpolation()
 
