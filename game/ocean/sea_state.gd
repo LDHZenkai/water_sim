@@ -8,7 +8,9 @@ extends Resource
 ## the GPU FFT cascades (fft_ocean.gd), sampled from the same spectrum, so the
 ## two bands never double count energy.
 const GRAVITY := 9.81
-const MAX_LONG_WAVES := 64
+## Shader and wake-simulation slots: two crossfading sea layers of 32 plus a
+## rogue wave group.
+const MAX_LONG_WAVES := 96
 
 @export_group("Wind sea")
 ## Wind speed 10 m above the surface, m/s.
@@ -35,19 +37,37 @@ const MAX_LONG_WAVES := 64
 ## Waves at least this long are explicit components (CPU and vertex shader).
 @export var split_wavelength := 12.0
 @export var noise_seed := 1729
+## Seconds for a new sea state to replace the old one once the weather has
+## moved on (real seas take hours to build; compressed so weather reads in play).
+@export var sea_response := 90.0
 
 var _tables := {}
 var _swell_scale := {}
+## Live sea (driven by weather.gd): long-wave layers {table, born, dies} that
+## crossfade in energy, plus an optional rogue wave group. Empty = static sea.
+var _layers: Array[Dictionary] = []
+var _layer_keys: Array[String] = []
+var _rogue := {}
+var _merged_key := ""
+var _merged := {}
+
+## Wind at the sea state's height in world XZ (blowing toward), m/s. Other
+## scripts must read live values through methods or get(): a property read
+## through a preloaded constant is folded to the file's value at compile time.
+func wind() -> Vector2:
+ return Vector2(cos(wind_heading),sin(wind_heading))*wind_speed
 
 func wind_peak() -> float:
  # Fetch-limited peak, never below the fully developed Pierson-Moskowitz peak.
- return maxf(22.0*pow(GRAVITY*GRAVITY/(wind_speed*fetch),1.0/3.0),0.855*GRAVITY/wind_speed)
+ var u := maxf(wind_speed,0.5)
+ return maxf(22.0*pow(GRAVITY*GRAVITY/(u*fetch),1.0/3.0),0.855*GRAVITY/u)
 
 func wind_alpha() -> float:
- return maxf(0.076*pow(wind_speed*wind_speed/(fetch*GRAVITY),0.22),0.0081)
+ var u := maxf(wind_speed,0.5)
+ return maxf(0.076*pow(u*u/(fetch*GRAVITY),0.22),0.0081)
 
 func swell_peak() -> float:
- return TAU/swell_period
+ return TAU/maxf(swell_period,3.0)
 
 func swell_alpha() -> float:
  # Scale the unit-alpha shape so its variance is Hs^2/16.
@@ -103,12 +123,11 @@ func height_variance(k_low: float, k_high: float) -> float:
  return total
 
 ## Mean square slope (both axes) of the spectrum between two wavenumbers.
-func slope_variance(k_low: float, k_high: float) -> float:
+func slope_variance(k_low: float, k_high: float, steps: int = 4096) -> float:
  if k_high <= k_low: return 0.0
  var low := log(sqrt(GRAVITY*maxf(k_low,0.0001)))
  var high := log(sqrt(GRAVITY*k_high))
  var total := 0.0
- var steps := 4096
  var step := (high-low)/float(steps)
  for i in range(steps):
   var omega := exp(low+(float(i)+0.5)*step)
@@ -225,7 +244,7 @@ static func _normal_quantile(u: float) -> float:
 ## moved relative to the ship's frame (buoyancy.gd): the whole wave field is
 ## carried past the hull with it.
 func phases(time: float, count: int, drift := Vector2.ZERO) -> PackedFloat32Array:
- var table := long_waves(count)
+ var table := components(time, count)
  var result := PackedFloat32Array()
  result.resize(MAX_LONG_WAVES)
  var kx: PackedFloat64Array = table.kx
@@ -277,7 +296,7 @@ func _sample(table: Dictionary, offsets: PackedFloat64Array, q: Vector2) -> Pack
 
 ## Forward map as a dictionary (position of the displaced point and normal).
 func displacement(q: Vector2, time: float, count: int, drift := Vector2.ZERO) -> Dictionary:
- var table := long_waves(count)
+ var table := components(time, count)
  var r := _sample(table,_phases64(table,time,drift),q)
  return {"position":Vector3(q.x+r[0],r[1],q.y+r[2]),"normal":_normal(r)}
 
@@ -289,7 +308,7 @@ static func _normal(r: PackedFloat64Array) -> Vector3:
 ## Surface through the world point (x, z) at time t: Newton inversion of the
 ## horizontal Lagrangian map with its exact 2x2 Jacobian.
 func surface(x: float, z: float, time: float, count: int = 32, drift := Vector2.ZERO) -> Dictionary:
- var table := long_waves(count)
+ var table := components(time, count)
  var offsets := _phases64(table,time,drift)
  var target := Vector2(x,z)
  var q := target
@@ -310,7 +329,7 @@ func surface(x: float, z: float, time: float, count: int = 32, drift := Vector2.
 ## Batched heights for buoyancy probes (two Newton steps; sub-mm here because
 ## the long band is gentle). One pass over the components per iteration.
 func heights(points: PackedVector2Array, time: float, count: int, drift := Vector2.ZERO) -> PackedFloat64Array:
- var table := long_waves(count)
+ var table := components(time, count)
  var offsets := _phases64(table,time,drift)
  var kx: PackedFloat64Array = table.kx
  var kz: PackedFloat64Array = table.kz
@@ -357,6 +376,144 @@ func heights(points: PackedVector2Array, time: float, count: int, drift := Vecto
    qz -= (-jxz*ex+jxx*ez)/det
   result[p] = height
  return result
+
+## Rounded sea state: a new long-wave layer starts only when this changes.
+func sea_key() -> String:
+ return "%.1f|%d|%d|%.2f|%.2f|%d|%.2f|%.2f" % [snappedf(wind_speed,0.5),roundi(log(maxf(fetch,1000.0))*10.0),roundi(rad_to_deg(wind_heading)/3.0),snappedf(swell_height,0.1),snappedf(swell_period,0.25),roundi(rad_to_deg(swell_heading)/3.0),snappedf(swell_spread,0.02),snappedf(choppiness,0.05)]
+
+static func _empty_table() -> Dictionary:
+ return {"count":0,"kx":PackedFloat64Array(),"kz":PackedFloat64Array(),"omega":PackedFloat64Array(),"amplitude":PackedFloat64Array(),"horizontal":PackedFloat64Array(),"phase":PackedFloat64Array(),"gpu":PackedVector4Array()}
+
+## Called by the weather every physics tick. When the sea state has moved on
+## and no crossfade is running, the next wind sea starts to grow while the
+## current one decays over sea_response seconds. Old layers are dropped.
+func evolve(time: float, count: int) -> void:
+ var key := sea_key()
+ if _layers.is_empty():
+  _layers.append({"table":long_waves(count),"born":-1e9,"dies":INF})
+  _layer_keys.append(key)
+ else:
+  var newest: Dictionary = _layers[-1]
+  var settled: bool = time >= float(newest.born) + sea_response
+  if settled and key != _layer_keys[-1]:
+   newest.dies = time
+   _layers.append({"table":long_waves(count),"born":time,"dies":INF})
+   _layer_keys.append(key)
+ while _layers.size() > 1 and time > float(_layers[0].dies) + sea_response:
+  _layers.pop_front()
+  _layer_keys.pop_front()
+ if not _rogue.is_empty() and time > float(_rogue.dies) + 10.0:
+  _rogue = {}
+ # Keep the component cache to the live layers.
+ if _tables.size() > 12:
+  var keep := {}
+  for layer in _layers:
+   for cached in _tables:
+    if is_same(_tables[cached], layer.table): keep[cached] = layer.table
+  _tables = keep
+ _merged_key = ""
+
+## Jump straight to the current sea state (weather menu "sea now").
+func settle(time: float, count: int) -> void:
+ _layers.clear()
+ _layer_keys.clear()
+ _layers.append({"table":long_waves(count),"born":-1e9,"dies":INF})
+ _layer_keys.append(sea_key())
+ _merged_key = ""
+
+## Forget all live state: back to a static sea from the exported parameters.
+func reset_live() -> void:
+ _layers.clear()
+ _layer_keys.clear()
+ _rogue = {}
+ _merged_key = ""
+
+func _layer_weight(layer: Dictionary, time: float) -> float:
+ var grow := 1.0 if float(layer.born) < -1e8 else smoothstep(float(layer.born), float(layer.born) + sea_response, time)
+ var fade := 0.0 if time >= float(layer.dies) + sea_response else (1.0 if time <= float(layer.dies) else 1.0 - smoothstep(float(layer.dies), float(layer.dies) + sea_response, time))
+ return grow * fade
+
+## Long-wave components live at time t: every layer's components with
+## amplitudes scaled by sqrt(weight) (energy crossfade), plus the rogue group.
+func components(time: float, count: int) -> Dictionary:
+ if _layers.is_empty() and _rogue.is_empty(): return long_waves(count)
+ var key := "%d|%.6f" % [count, time]
+ if key == _merged_key: return _merged
+ var merged := _empty_table()
+ var parts: Array = []
+ for layer in _layers: parts.append([layer.table, _layer_weight(layer, time)])
+ if _layers.is_empty(): parts.append([long_waves(count), 1.0])
+ if not _rogue.is_empty():
+  var rogue_weight := smoothstep(float(_rogue.born), float(_rogue.born) + 8.0, time) * (1.0 - smoothstep(float(_rogue.dies), float(_rogue.dies) + 8.0, time))
+  parts.append([_rogue.table, rogue_weight])
+ for part in parts:
+  var table: Dictionary = part[0]
+  var scale := sqrt(clampf(part[1], 0.0, 1.0))
+  if scale <= 0.0: continue
+  for i in range(table.count):
+   if merged.count >= MAX_LONG_WAVES: break
+   merged.kx.append(table.kx[i])
+   merged.kz.append(table.kz[i])
+   merged.omega.append(table.omega[i])
+   merged.amplitude.append(table.amplitude[i] * scale)
+   merged.horizontal.append(table.horizontal[i] * scale)
+   merged.phase.append(table.phase[i])
+   merged.gpu.append(Vector4(table.kx[i], table.kz[i], table.amplitude[i] * scale, table.horizontal[i] * scale))
+   merged.count += 1
+ _merged_key = key
+ _merged = merged
+ return merged
+
+## Significant height of the long band at time t (the part a hull feels), m.
+func live_height(time: float, count: int) -> float:
+ var table := components(time, count)
+ var variance := 0.0
+ for i in range(table.count): variance += table.amplitude[i] * table.amplitude[i] * 0.5
+ return 4.0 * sqrt(variance)
+
+## Energy-weighted wave travel direction and frequency at time t.
+func dominant_wave(time: float, count: int) -> Dictionary:
+ var table := components(time, count)
+ var direction := Vector2.ZERO
+ var frequency := 0.0
+ var energy := 0.0
+ for i in range(table.count):
+  var e: float = table.amplitude[i] * table.amplitude[i]
+  direction += Vector2(table.kx[i], table.kz[i]).normalized() * e
+  frequency += table.omega[i] * e
+  energy += e
+ if energy <= 0.0: return {"direction":Vector2(cos(wind_heading), sin(wind_heading)), "omega":wind_peak()}
+ return {"direction":direction.normalized(), "omega":frequency / energy}
+
+## A rogue wave by dispersive focusing: a group of components whose phases
+## all put a crest at water position focus (the water-frame point the ship
+## will occupy) at focus_time. Before and after, the group is dispersed and
+## unremarkable, exactly as in wave-tank experiments and the Draupner record.
+func spawn_rogue(time: float, focus_time: float, focus: Vector2, crest: float, count: int = 32, members: int = 16) -> void:
+ var dominant := dominant_wave(time, count)
+ var heading: float = dominant.direction.angle()
+ var peak: float = dominant.omega
+ var rng := RandomNumberGenerator.new()
+ rng.seed = int(focus_time * 1000.0) + noise_seed
+ var table := _empty_table()
+ for i in range(members):
+  var omega := peak * lerpf(0.8, 1.3, (float(i) + rng.randf()) / float(members))
+  var angle := heading + deg_to_rad(rng.randf_range(-12.0, 12.0))
+  var k := omega * omega / GRAVITY
+  var kv := Vector2(cos(angle), sin(angle)) * k
+  var amplitude := crest / float(members)
+  table.kx.append(kv.x)
+  table.kz.append(kv.y)
+  table.omega.append(omega)
+  table.amplitude.append(amplitude)
+  table.horizontal.append(amplitude * choppiness)
+  table.phase.append(fposmod(PI * 0.5 - kv.dot(focus) + omega * focus_time, TAU))
+  table.count += 1
+ _rogue = {"table":table, "born":time, "dies":focus_time + 25.0, "focus_time":focus_time, "focus":focus, "crest":crest, "direction":Vector2(cos(heading), sin(heading))}
+ _merged_key = ""
+
+func rogue() -> Dictionary:
+ return _rogue
 
 ## Parameters for the GPU spectrum (fft_ocean.gd push constants).
 func gpu_spectrum() -> PackedFloat32Array:

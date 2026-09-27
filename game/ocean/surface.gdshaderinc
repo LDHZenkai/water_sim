@@ -1,7 +1,7 @@
 // Long-wave band: explicit components shared with sea_state.gd (CPU).
 // (kx, kz, amplitude, horizontal amplitude); phases are wrapped on the CPU.
-uniform vec4 long_waves[64];
-uniform float long_phases[64];
+uniform vec4 long_waves[96];
+uniform float long_phases[96];
 uniform int long_count = 32;
 uniform float sim_time;
 uniform bool fog_enabled = true;
@@ -51,7 +51,7 @@ void vertex() {
 	vec2 slope = vec2(0.0);
 	float jxx = 1.0, jzz = 1.0, jxz = 0.0;
 	long_hidden = 0.0;
-	for (int i = 0; i < 64; i++) {
+	for (int i = 0; i < 96; i++) {
 		if (i >= long_count) break;
 		vec4 w = long_waves[i];
 		float k = length(w.xy);

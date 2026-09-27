@@ -23,8 +23,8 @@ layout(set = 0, binding = 3, std430) restrict readonly buffer Step {
 	vec4 chop;      // cascade 0 scale, offset x, offset z, fft enabled
 	vec4 chop1;     // cascade 1 scale, offset x, offset z, unused
 	vec4 impulses[16];   // world x, world z, radius, depth
-	vec4 long_waves[64]; // kx, kz, amplitude, horizontal amplitude
-	vec4 long_phases[16];
+	vec4 long_waves[96]; // kx, kz, amplitude, horizontal amplitude
+	vec4 long_phases[24];
 } params;
 layout(set = 0, binding = 4) uniform sampler2D keel;
 layout(set = 0, binding = 5) uniform sampler2DArray chop_map;

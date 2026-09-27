@@ -36,6 +36,9 @@ var _fft_set: RID
 var _resolve_sets: Array[RID] = []
 var _mip_sets := []
 var _history_time := NAN
+var _init_set: RID
+## Spectrum parameters last written into h0 (sea_state.gpu_spectrum()).
+var _spectrum := PackedFloat32Array()
 
 static func supported() -> bool:
  return RenderingServer.get_rendering_device() != null
@@ -45,6 +48,7 @@ func _init(sea_state: Resource, size: int) -> void:
  n = size
  levels = int(round(log(float(n))/log(2.0)))+1
  bands = cascade_bands(sea, n)
+ _spectrum = sea.gpu_spectrum()
  for name in SHADERS:
   _spirv[name] = preload("res://ocean/compute/compute_shader.gd").spirv(name)
  RenderingServer.call_on_render_thread(_create)
@@ -127,18 +131,34 @@ func _create() -> void:
   for level in range(1,levels):
    per_level.append(_make_set("mip_down",[_uniform(0,image,_views[0][layer][level-1]),_uniform(1,image,_views[0][layer][level]),_uniform(2,image,_views[1][layer][level-1]),_uniform(3,image,_views[1][layer][level])]))
   _mip_sets.append(per_level)
- var spectrum: PackedFloat32Array = sea.gpu_spectrum()
- var values: Array = Array(spectrum)
- values.append_array([n,layers,TAU/REPEAT_PERIOD,0.0])
- var list := rd.compute_list_begin()
- rd.compute_list_bind_compute_pipeline(list,_pipelines.spectrum_init.pipeline)
- rd.compute_list_bind_uniform_set(list,init_set,0)
- var push := _bytes(values)
- rd.compute_list_set_push_constant(list,push,push.size())
- rd.compute_list_dispatch(list,ceili(n/8.0),ceili(n/8.0),layers)
- rd.compute_list_end()
+ _init_set = init_set
+ _initialise(_spectrum)
  displacement.texture_rd_rid = _textures[0]
  slopes.texture_rd_rid = _textures[1]
+
+func _initialise(spectrum: PackedFloat32Array) -> void:
+ var values: Array = Array(spectrum)
+ values.append_array([n,SIZES.size(),TAU/REPEAT_PERIOD,0.0])
+ var list := rd.compute_list_begin()
+ rd.compute_list_bind_compute_pipeline(list,_pipelines.spectrum_init.pipeline)
+ rd.compute_list_bind_uniform_set(list,_init_set,0)
+ var push := _bytes(values)
+ rd.compute_list_set_push_constant(list,push,push.size())
+ rd.compute_list_dispatch(list,ceili(n/8.0),ceili(n/8.0),SIZES.size())
+ rd.compute_list_end()
+
+## Rewrite h0 when the weather changes the spectrum. The Gaussian noise is a
+## hash of each mode, so only amplitudes move: a gradual change in wind gives
+## a gradual change in the short waves, never a new random sea.
+func refresh(spectrum: PackedFloat32Array) -> bool:
+ if spectrum.size() == _spectrum.size():
+  var same := true
+  for i in range(spectrum.size()):
+   if absf(spectrum[i] - _spectrum[i]) > 1e-5 * maxf(1.0, absf(_spectrum[i])): same = false
+  if same: return false
+ _spectrum = spectrum
+ RenderingServer.call_on_render_thread(func() -> void: if rd != null: _initialise(spectrum))
+ return true
 
 ## Queue one synthesis at time (s). dt drives whitecap decay; a jump in time
 ## (first frame, frozen capture) replays a few seconds so foam trails exist.

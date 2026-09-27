@@ -15,6 +15,9 @@ uniform vec3 water_albedo = vec3(0.0012, 0.0115, 0.032);
 // Whitecaps start where the combined surface is compressed this much
 // (Jacobian of every band's horizontal map, long x cascade 0 x cascade 1).
 uniform float breaking_jacobian = 0.5;
+// Gale foam streaks blown down the wind (0 below force 7), ocean.gd.
+uniform float foam_streaks = 0.0;
+uniform vec2 wind_direction = vec2(1.0, 0.0);
 
 struct Water {
 	vec2 slope;
@@ -47,6 +50,14 @@ Water sample_water(vec2 q, float distance_to_eye) {
 		water.foam = max(max(s0.z, s1.z * 0.8), breaking);
 		// Metre and decimetre ripples break foam into lace and bubbles.
 		water.fine = clamp(0.5 + 1.2 * (s1.x + s1.y) + 2.0 * (s2.x - s2.y), 0.0, 1.0);
+		if (foam_streaks > 0.0) {
+			// From force 8 the wind tears foam off the crests and lays it in
+			// long bands down the wind; they ride on the water (q frame).
+			vec2 across = vec2(-wind_direction.y, wind_direction.x);
+			vec2 sp = vec2(dot(q, across) * 0.08, dot(q, wind_direction) * 0.005);
+			float streak = texture(detail1, sp).r * 0.65 + texture(detail0, sp * vec2(3.1, 2.3) + 0.37).r * 0.35;
+			water.foam = max(water.foam, smoothstep(0.6, 0.8, streak) * foam_streaks * 0.5);
+		}
 	} else {
 		// No RenderingDevice (headless, Compatibility): legacy detail maps.
 		vec2 uv = q;
@@ -76,7 +87,10 @@ vec3 water_normal(Water water) {
 // so thin foam is lace and bubbles and only thick foam is solid.
 float foam_coverage(float amount, float fine) {
 	float threshold = 1.0 - amount;
-	return smoothstep(threshold - 0.08, threshold + 0.12, fine) * smoothstep(0.02, 0.2, amount);
+	// Where the lace is finer than a pixel, blend to its mean coverage
+	// instead of aliasing into speckle.
+	float soft = 1.5 * fwidth(fine);
+	return smoothstep(threshold - 0.08 - soft, threshold + 0.12 + soft, fine) * smoothstep(0.02, 0.2, amount);
 }
 
 // GGX roughness from total slope variance: Beckmann m^2 = variance, alpha ~ m,

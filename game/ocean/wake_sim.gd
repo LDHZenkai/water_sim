@@ -9,7 +9,7 @@ extends RefCounted
 ## Output: a two-layer Texture2DArrayRD with mips, sampled by the ocean shader
 ##   layer 0 (height, dh/dx, dh/dz, foam)   layer 1 (u, w, P, phi)
 const SHADERS := ["wake_force","wake_propagate","fft","wake_output","mip_down"]
-const STEP_BYTES := 1744
+const STEP_BYTES := 2384
 const MAX_IMPULSES := 16
 const FOAM_DECAY := 3.5
 
@@ -173,7 +173,7 @@ func step(ship_global: Transform3D, time: float, dt: float, drift := Vector2.ZER
  floats.append_array([corner.x,corner.y,texel,float(n)])
  floats.append_array([current.x,current.y,dt,2.0 if _first else 0.0])
  var bytes := floats.to_byte_array()
- var table: Dictionary = sea.long_waves(count)
+ var table: Dictionary = sea.components(time, count)
  var impulses := _impulses.slice(0,MAX_IMPULSES)
  _impulses.clear()
  var ints := PackedInt32Array([shift.x,shift.y,impulses.size(),int(table.count)])

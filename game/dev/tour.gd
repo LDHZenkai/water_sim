@@ -1,6 +1,13 @@
 extends Node3D
 ## Each shot freezes the shared clock and integrates the hull to that exact time.
 const SHOTS := [
+ {"name":"24_storm_poop_deck","eye":Vector3(-11.5,10.35,0.4),"target":Vector3(4,6,-3),"fov":72.0,"ship":true,"weather":"Storm","sail":1,"lightning":Vector3(0.9,0,-0.4)},
+ {"name":"25_storm_exterior","eye":Vector3(55,7,45),"target":Vector3(0,9,0),"fov":42.0,"ship":true,"weather":"Storm","sail":1,"lightning":Vector3(-0.8,0,-0.6)},
+ {"name":"26_gale_sails","eye":Vector3(-1.2,4.49,2.0),"target":Vector3(7,19,-1),"fov":78.0,"ship":true,"weather":"Gale","sail":3},
+ {"name":"27_rogue_wave","eye":Vector3(-11.5,10.35,0.4),"target":Vector3(0,0,0),"fov":70.0,"ship":true,"weather":"Gale","sail":2,"rogue":7.0},
+ {"name":"28_weather_menu","eye":Vector3(-11.5,10.35,0.4),"target":Vector3(4,5,0),"fov":62.0,"ship":true,"weather":"Fresh","sail":3,"menu":true},
+ {"name":"29_calm_exterior","eye":Vector3(70,4,90),"target":Vector3(0,10,0),"fov":34.0,"weather":"Calm","sail":3},
+ {"name":"30_storm_helm","eye":Vector3(-11.0,10.2,0.0),"target":Vector3(10,6.5,0),"fov":70.0,"ship":true,"weather":"Storm","sail":2,"helm":true},
  {"name":"23_at_the_helm","eye":Vector3(-11.0,10.2,0.0),"target":Vector3(10,6.5,0),"fov":70.0,"ship":true},
  {"name":"20_sea_from_fighting_top","eye":Vector3(0.12,16.83,0.1),"target":Vector3(-6,-2,26),"fov":62.0,"ship":true},
  {"name":"21_bow_waterline","eye":Vector3(24,2.2,9),"target":Vector3(8,0.2,0),"fov":48.0,"ship":true},
@@ -54,6 +61,12 @@ func _ready() -> void:
 			if absf(motion.roll)>largest:
 				largest=absf(motion.roll)
 				shot_time=t
+	if data.has("weather"):
+		# The sea and sky of that weather, fully developed.
+		$World.weather.apply_preset(data.weather)
+		$World.weather.target.gustiness = 0.0
+		$World.weather.settle_now()
+		$World.buoyancy.start_sail = data.get("sail", 3)
 	$World.freeze_at(shot_time)
 	for door in $World.doors: door.set_open(name.begins_with("08_") or name.begins_with("09_") or name.begins_with("14_") or name.begins_with("18_"),true)
 	await $World.cabin_prewarm.warm()
@@ -92,7 +105,24 @@ func _ready() -> void:
 	$World.interactables.lid.rotation.x=deg_to_rad(-105) if name=="18_chest_open" else 0.0
 	$World.interactables.raised=name=="19_compass_held"
 	$World.interactables._process(1.0)
-	if name == "23_at_the_helm":
+	# Photos without the start-up key hints.
+	$World.hud._hint_left = 0.0
+	if name == "23_at_the_helm" or data.get("helm", false):
 		$World.helm.panel.visible = true
-		$World.helm.readout.text = $World.helm.describe()
+		$World.helm.readout.text = $World.helm.describe() + ("\n" + $World.helm.conditions() if data.get("helm", false) else "")
+	if data.has("rogue"):
+		# A rogue wave focusing on the ship a few seconds after the shot, seen
+		# from the poop deck looking where it comes from.
+		var motion = $World.buoyancy
+		var lead: float = data.rogue
+		var focus: Vector2 = -(motion.drift + motion.water_velocity() * lead)
+		var sea = $World.weather.SEA
+		sea.spawn_rogue(0.0, shot_time + lead, focus, 2.0 * sea.live_height(shot_time, $World.ocean.wave_count), $World.ocean.wave_count)
+		var from: Vector2 = -sea.rogue().direction
+		$Camera3D.look_at(eye + Vector3(from.x, -0.12, from.y) * 100.0)
+		print("ROGUE: crest ", sea.rogue().crest, " m from ", from, " focus in ", lead, " s")
+	if data.has("lightning"):
+		$World.atmosphere._strike((data.lightning as Vector3).normalized(), 2200.0, 1.0)
+	if data.get("menu", false):
+		$World.weather_menu.toggle()
 	print("TOUR: ", data.name, " seed=1729 sim_time=", get_node("/root/SimClock").time, "; viewport=", get_viewport().get_visible_rect().size)

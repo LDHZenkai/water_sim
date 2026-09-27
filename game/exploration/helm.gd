@@ -16,6 +16,8 @@ const WHEEL_TURNS := 0.75
 var ship: Node3D
 var player: CharacterBody3D
 var motion: RefCounted
+## Live weather (scripts/weather.gd), for the readout's third line.
+var weather: Node
 var items: Node3D
 var steering := false
 var wheel: Node3D
@@ -100,7 +102,7 @@ func _build_ui() -> void:
  panel.anchor_bottom = 1.0
  panel.offset_left = -330
  panel.offset_right = 330
- panel.offset_top = -92
+ panel.offset_top = -118
  panel.offset_bottom = -20
  var style := StyleBoxFlat.new()
  style.bg_color = Color(0.05, 0.04, 0.03, 0.62)
@@ -167,7 +169,15 @@ func _process(_delta: float) -> void:
  # Seen from the helmsman, port helm turns the wheel anticlockwise.
  wheel.rotation.x = -motion.rudder / motion.MAX_RUDDER * WHEEL_TURNS * TAU
  prompt.text = "E · take the helm" if in_reach() else ""
- if steering: readout.text = describe()
+ if steering: readout.text = describe() + ("\n" + conditions() if weather else "")
+
+## Weather and the ship's warnings: overpressed canvas, surfing, broaching.
+func conditions() -> String:
+ var line: String = weather.describe() + "    Heel %d°" % roundi(rad_to_deg(absf(motion.heel)))
+ if motion.overpressed(): line += "  ·  OVERPRESSED, reef (S)"
+ if motion.surf > 0.25: line += "  ·  SURFING"
+ if absf(motion.broach) > 0.004: line += "  ·  BROACHING, meet her"
+ return line
 
 static func bearing(direction: Vector2) -> float:
  # North is -Z, east is +X (the held compass agrees).

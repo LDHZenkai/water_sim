@@ -95,9 +95,10 @@ static func run(world: Node3D, check: Callable, flood_control: bool = false) -> 
    if flood_control: pose.origin.y-=2.0
    final_pose=pose
    max_pitch=maxf(max_pitch,absf(rad_to_deg(motion.pitch)))
-   max_roll=maxf(max_roll,absf(rad_to_deg(motion.roll)))
+   # Waves' roll about the steady heel the sails put on the hull.
+   max_roll=maxf(max_roll,absf(rad_to_deg(motion.roll-motion.heel)))
    pitch_windows[i/1800]=maxf(pitch_windows[i/1800],absf(rad_to_deg(motion.pitch)))
-   roll_windows[i/1800]=maxf(roll_windows[i/1800],absf(rad_to_deg(motion.roll)))
+   roll_windows[i/1800]=maxf(roll_windows[i/1800],absf(rad_to_deg(motion.roll-motion.heel)))
    if i%6!=0: continue
    var probes := PackedVector2Array()
    var placed: Array[Vector3] = []
@@ -120,7 +121,7 @@ static func run(world: Node3D, check: Callable, flood_control: bool = false) -> 
     var water: Vector3=pose.affine_inverse()*Vector3(p.x,heights[perimeter.size()+j],p.z)
     cap_clear=minf(cap_clear,cap_points[j].y-water.y)
   print("LOCAL ",count," waves: samples=",perimeter.size()," deck clearance=",deck_clear," m; wet depth=",wet," m at ",wet_point,"; cap clearance=",cap_clear," m")
-  print("MOTION ",count," waves: pitch=",max_pitch," roll=",max_roll,"; pitch windows=",pitch_windows,"; roll windows=",roll_windows)
+  print("MOTION ",count," waves: pitch=",max_pitch," roll about heel=",max_roll," heel=",rad_to_deg(motion.heel),"; pitch windows=",pitch_windows,"; roll windows=",roll_windows)
   check.call(deck_clear>=0.30,"local deck clearance >=0.30 m, tier "+str(count))
   check.call(wet>=0.40,"local bottom submergence >=0.40 m including bow/stern, tier "+str(count))
   check.call(cap_clear>=0.10,"ocean below actual bilge cap by >=0.10 m, tier "+str(count))

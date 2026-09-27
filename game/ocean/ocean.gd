@@ -21,6 +21,12 @@ var wake: RefCounted
 var motion: RefCounted
 var settings: Dictionary = {}
 var _last_render_time := NAN
+var _uploaded_table: Dictionary = {}
+var _spectrum_frame := 0
+## Extra glitter roughness from raindrop rings (atmosphere.gd sets it).
+var rain_roughness := 0.0
+var _variance_key := ""
+var _unresolved := 0.004
 
 func _ready() -> void:
  var quality = get_node("/root/Quality")
@@ -79,11 +85,36 @@ func _ready() -> void:
   var scales: PackedFloat32Array = fft.shader_scales()
   for i in range(scales.size()):
    material.set_shader_parameter("cascade_scale%d" % i, scales[i])
-  # Ripples finer than the last cascade: Cox-Munk total minus what is resolved.
-  var resolved: float = SEA.slope_variance(0.0001, fft.bands[-1].z)
-  material.set_shader_parameter("unresolved_variance", maxf(SEA.cox_munk_variance()-resolved, 0.002))
+  _update_variance()
  material_override = material
  _build_grid()
+
+## Ripples finer than the last cascade: Cox-Munk total for this wind minus
+## what the spectrum resolves. Recomputed when the weather moves the sea.
+func _update_variance() -> void:
+ _variance_key = SEA.sea_key()
+ var resolved: float = SEA.slope_variance(0.0001, fft.bands[-1].z, 512)
+ _unresolved = maxf(SEA.cox_munk_variance()-resolved, 0.002)
+ material.set_shader_parameter("unresolved_variance", _unresolved + rain_roughness)
+ # Whitecaps: the shader breaks crests where the surface Jacobian J (long
+ # band x first two cascades) is compressed below breaking_jacobian. J is
+ # close to normal about 1 with deviation choppiness x rms slope of those
+ # bands, so the threshold is the quantile that whitens the measured
+ # fraction of sea for this wind. (Live values through get(): see sea_state.)
+ var wind: float = SEA.get("wind_speed")
+ var spread := float(SEA.get("choppiness"))*sqrt(SEA.slope_variance(0.0001, fft.bands[1].z, 512))
+ # Monahan's fraction counts the residual foam too; the cascades carry that
+ # trail (foam decay), so the crests breaking now are about half of it.
+ var threshold := 1.0+spread*SEA._normal_quantile(maxf(0.5*whitecap_coverage(wind), 0.0001))
+ material.set_shader_parameter("breaking_jacobian", clampf(threshold-0.05, 0.15, 0.95))
+ material.set_shader_parameter("foam_streaks", smoothstep(15.0, 24.0, wind))
+ var heading: float = SEA.get("wind_heading")
+ material.set_shader_parameter("wind_direction", Vector2(cos(heading), sin(heading)))
+
+## Fraction of the sea surface white with whitecaps at wind speed U (m/s,
+## 10 m): W = 3.84e-6 U^3.41 (Monahan and O'Muircheartaigh 1980).
+static func whitecap_coverage(wind: float) -> float:
+ return clampf(3.84e-6*pow(wind, 3.41), 0.0, 0.3)
 
 func _exit_tree() -> void:
  # Wake first: its uniform sets reference the FFT textures.
@@ -142,8 +173,21 @@ func _process(_delta: float) -> void:
  var time: float = get_node("/root/SimClock").render_time()
  var water_drift := render_drift()
  material.set_shader_parameter("sim_time", time)
+ # A live sea (weather) crossfades layers every frame; a static one uploads once.
+ var table: Dictionary = SEA.components(time, wave_count)
+ if not is_same(table, _uploaded_table):
+  var waves := PackedVector4Array(table.gpu)
+  waves.resize(SEA.MAX_LONG_WAVES)
+  material.set_shader_parameter("long_waves", waves)
+  material.set_shader_parameter("long_count", table.count)
+  _uploaded_table = table
  material.set_shader_parameter("long_phases", SEA.phases(time, wave_count, water_drift))
  if fft:
+  _spectrum_frame += 1
+  if _spectrum_frame % 3 == 0:
+   fft.refresh(SEA.gpu_spectrum())
+   if SEA.sea_key() != _variance_key: _update_variance()
+  material.set_shader_parameter("unresolved_variance", _unresolved + rain_roughness)
   var dt := 0.0 if is_nan(_last_render_time) else time-_last_render_time
   fft.update(time, dt if dt >= 0.0 else -1.0)
   var offsets: PackedVector2Array = fft.shader_offsets(water_drift)

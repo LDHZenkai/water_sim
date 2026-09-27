@@ -28,7 +28,7 @@ static func _sail(motion: RefCounted, seconds: float) -> void:
 
 func _test_sailing() -> void:
  var motion = Motion.new()
- var wind: Vector2 = Motion.wind()
+ var wind: Vector2 = motion.wind()
  var from := -wind.normalized()
  # Heading whose bow points at direction d (bow = (cos h, -sin h)).
  var toward := func(d: Vector2) -> float: return atan2(-d.y, d.x)
@@ -92,6 +92,9 @@ func _test_helm() -> void:
  var motion = world.buoyancy
  player.test_input = true
  player.move_input = Vector2.ZERO
+ # Steady wind for the readout checks (no gusts veering it).
+ world.weather.current.gustiness = 0.0
+ world.weather.target.gustiness = 0.0
  for i in range(30): await physics_frame
  check(helm != null and helm.wheel != null, "the ship has a wheel")
  print("HELM readout: ", helm.describe().replace("\n", " | "))
@@ -138,6 +141,6 @@ func _test_helm() -> void:
  motion.canvas = 0.0
  await process_frame
  await process_frame
- check(not world.sails_mesh.visible, "furled canvas hides the sails")
+ check(world.sails_mesh.visible and float(world.sail_rig.material.get_shader_parameter("canvas")) < 0.01, "furled canvas is hauled up to the yards")
  world.queue_free()
  await process_frame
