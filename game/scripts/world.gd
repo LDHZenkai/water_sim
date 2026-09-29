@@ -19,10 +19,32 @@ var rigging_climb: Node3D
 var exterior_shadow_distance := 50.0
 var decks: Node3D
 var buoyancy = preload("res://ocean/buoyancy.gd").new()
+var helm: Node3D
+var sails_mesh: MeshInstance3D
+## Wind-driven sails (exploration/sails.gd).
+var sail_rig: RefCounted
+## Live weather driving the sea, the wind on the rig and the sky.
+var weather: Node
+var atmosphere: Node3D
+var hud: CanvasLayer
+var weather_menu: CanvasLayer
+var sound: Node
 
 func _ready() -> void:
 	seed(1729)
 	process_physics_priority = -50
+	# Sailing: the hull stays at the origin and the sea drifts past it.
+	var ship_settings: Dictionary = get_node("/root/Quality").ocean_settings()
+	# Weather first: it sets the sea state the ship starts sailing in.
+	weather = preload("res://scripts/weather.gd").new()
+	weather.name = "Weather"
+	add_child(weather)
+	weather.setup(buoyancy, ship_settings["ocean-waves"], ship_settings["weather"], ship_settings["weather-dynamic"] == "on")
+	weather.rogue_passed.connect(func(how: String, side: float) -> void: buoyancy.strike(how, side))
+	buoyancy.start_sail = ship_settings["sails"]
+	var knots: float = ship_settings["ship-speed"]
+	buoyancy.start_speed = knots*0.514444 if knots >= 0.0 else -1.0
+	buoyancy.reset_navigation()
 	_build_ship()
 	decks = preload("res://exploration/decks.gd").new()
 	decks.name = "Decks"
@@ -31,6 +53,10 @@ func _ready() -> void:
 	$Player.climb_query = decks.climb_at
 	_build_sea()
 	_build_light()
+	atmosphere = preload("res://scripts/atmosphere.gd").new()
+	atmosphere.name = "WeatherEffects"
+	add_child(atmosphere)
+	atmosphere.setup(weather, buoyancy, $Atmosphere.environment, $Sun, ocean, _indoors, get_node("/root/Quality").tier)
 	rigging_climb=preload("res://exploration/rigging_climb.gd").new()
 	rigging_climb.name="RiggingClimb"
 	rigging_climb.build(ship_body,ship_body.get_node("Model"),get_node("/root/Quality").effective)
@@ -41,12 +67,30 @@ func _ready() -> void:
 	cabin.name = "Cabin"
 	cabin.build(ship_body,$Atmosphere.environment,doors,$Player,hull_partition.knees)
 	ship_body.add_child(cabin)
+	atmosphere.cabin = cabin
 	deck_props=preload("res://exploration/deck_props.gd").new()
 	deck_props.build(ship_body,get_node("/root/Quality").effective)
 	ship_body.add_child(deck_props)
 	interactables=preload("res://exploration/interactables.gd").new()
 	interactables.build(cabin,deck_props,$Player)
 	ship_body.add_child(interactables)
+	helm=preload("res://exploration/helm.gd").new()
+	helm.name="Helm"
+	ship_body.add_child(helm)
+	helm.build(ship_body,$Player,buoyancy,interactables,deck_props.timber)
+	helm.weather = weather
+	hud = preload("res://scripts/hud.gd").new()
+	hud.name = "HUD"
+	add_child(hud)
+	hud.setup(weather, buoyancy, $Player)
+	weather_menu = preload("res://scripts/weather_menu.gd").new()
+	weather_menu.name = "WeatherMenu"
+	add_child(weather_menu)
+	weather_menu.setup(weather, hud)
+	sound = preload("res://scripts/sound.gd").new()
+	sound.name = "Sound"
+	add_child(sound)
+	sound.setup(weather, buoyancy, $Player, sail_rig, _indoors)
 	cabin_prewarm=preload("res://exploration/cabin_prewarm.gd").new()
 	cabin_prewarm.build(cabin,[deck_props,interactables,rigging_climb,ship_body.get_node("Model"),doors[0],doors[1]])
 	add_child(cabin_prewarm)
@@ -54,9 +98,15 @@ func _ready() -> void:
 	$Player.global_position = ship_body.get_node("SpawnPoint").global_position
 	$Player.spawn_point = ship_body.get_node("SpawnPoint")
 	$Player.sea_height = ocean.surface_at
+	$Player.splashed.connect(func(): ocean.disturb($Player.global_position, 0.7, 0.6))
 	$Player.inside_hull = ocean.contains_point
 	$Player.deck = ship_body
 	$Player.deck_pose = func(): return global_transform * next_ship_pose
+	$Player.motion = buoyancy
+
+## Under cover from the weather: inside the great cabin.
+func _indoors(eye: Vector3) -> bool:
+	return cabin != null and cabin.contains(ship_body.to_local(eye) - Vector3.UP * 1.4)
 
 func _build_ship() -> void:
 	ship_body = SHIP_SCENE.instantiate()
@@ -69,14 +119,11 @@ func _build_ship() -> void:
 	for mesh in model.find_children("*", "MeshInstance3D"):
 		var original = mesh.get_active_material(0)
 		if "sails" in mesh.name and original is StandardMaterial3D:
-			var sails = original.duplicate()
-			# The supplied RGB JPEG has no alpha; MASK cannot cut any pixels.
-			sails.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
-			sails.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
-			sails.disable_fog = true
-			sails.backlight_enabled = true
-			sails.backlight = Color(0.34, 0.31, 0.25)
-			mesh.material_override = sails
+			sails_mesh = mesh
+			# Opaque cloth (the supplied RGB JPEG has no alpha) that fills, luffs,
+			# backs and furls with the apparent wind.
+			sail_rig = preload("res://exploration/sails.gd").new()
+			sail_rig.build(mesh, original)
 		if "rigging" in mesh.name and original is StandardMaterial3D:
 			mesh.visible = get_node("/root/Quality").overrides.get("rigging", "on") == "on"
 			mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -135,6 +182,7 @@ func _build_sea() -> void:
 	ocean = preload("res://ocean/ocean.gd").new()
 	ocean.name = "Ocean"
 	ocean.ship = ship_body
+	ocean.motion = buoyancy
 	add_child(ocean)
 	for mesh in ship_body.get_node("Model").find_children("*", "MeshInstance3D"):
 		if "hull" in mesh.name:
@@ -149,7 +197,7 @@ func freeze_at(time: float) -> void:
 	get_node("/root/SimClock").freeze(time)
 	# Capture placement is a teleport, not platform movement.
 	ship_body.sync_to_physics = false
-	next_ship_pose = buoyancy.pose_at(time, ocean.wave_count)
+	next_ship_pose = buoyancy.pose_at(time, ocean.wave_count, ocean.wake_replay(time))
 	ship_body.transform = next_ship_pose
 	ship_body.reset_physics_interpolation()
 
@@ -204,7 +252,10 @@ func _warm_main() -> void:
 		await cabin_prewarm.warm()
 		$Player.input_enabled=was_enabled
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	if sail_rig: sail_rig.update(buoyancy, delta)
+	# Rain and heavy spray wet the planking: footing goes sooner.
+	$Player.wet = float(weather.current.rain) > 0.25 or weather.sea_height() > 4.5
 	var camera:=get_viewport().get_camera_3d()
 	if camera==null or cabin==null:return
 	var settings: Dictionary=get_node("/root/Quality").effective

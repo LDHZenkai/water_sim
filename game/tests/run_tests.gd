@@ -92,31 +92,50 @@ func _run() -> void:
 	print("Tests: ", "PASS" if failures == 0 else "FAIL", " (", failures, " failures)")
 	quit(0 if failures == 0 else 1)
 
-const PROFILE = preload("res://ocean/default_waves.tres")
-# Independent forward sum and Newton inverse, deliberately not using PROFILE.displacement.
-func reference_forward(q: Vector2, time: float, count: int) -> Vector3:
+const SEA = preload("res://ocean/default_sea.tres")
+# Independent forward sum and finite-difference Newton inverse over the raw
+# component table, deliberately not using SEA.displacement/_sample.
+func reference_forward(q: Vector2, time: float, count: int, drift := Vector2(3.7, -1.9)) -> Vector3:
+	var table: Dictionary = SEA.long_waves(count)
 	var p := Vector3(q.x,0,q.y)
-	for i in range(count):
-		var wave: Vector4 = PROFILE.waves[i]
-		var angle := TAU*(cos(wave.x)*q.x+sin(wave.x)*q.y)/wave.z-sqrt(9.81*TAU/wave.z)*time
-		p.x += wave.y*wave.w*cos(wave.x)*cos(angle)
-		p.z += wave.y*wave.w*sin(wave.x)*cos(angle)
-		p.y += wave.y*sin(angle)
+	for i in range(table.count):
+		var k := Vector2(table.kx[i],table.kz[i])
+		var angle: float = k.dot(q-drift)+table.phase[i]-table.omega[i]*time
+		var direction := k.normalized()
+		p.x += table.horizontal[i]*direction.x*cos(angle)
+		p.z += table.horizontal[i]*direction.y*cos(angle)
+		p.y += table.amplitude[i]*sin(angle)
 	return p
 
 func _test_waves() -> void:
-	check(PROFILE.waves.size()>=5,"wave profile has at least five waves")
+	var table: Dictionary = SEA.long_waves(32)
+	check(table.count==32,"sea state yields the requested 32 long-wave components")
+	var dispersion := 0.0
+	var long_variance := 0.0
+	var shortest := INF
+	for i in range(table.count):
+		var k := Vector2(table.kx[i],table.kz[i]).length()
+		dispersion = maxf(dispersion,absf(table.omega[i]*table.omega[i]-9.81*k))
+		shortest = minf(shortest,TAU/k)
+		long_variance += table.amplitude[i]*table.amplitude[i]/2.0
+	check(dispersion<1e-6,"every long component obeys deep-water dispersion w^2 = g k")
+	check(shortest>=SEA.split_wavelength*0.999,"no long component is shorter than the split wavelength (FFT band owns those)")
+	var split_k: float = SEA.split_frequency()*SEA.split_frequency()/9.81
+	var expected: float = SEA.height_variance(0.0001,split_k)
+	print("Long band: Hs=",4.0*sqrt(long_variance)," m (spectrum ",4.0*sqrt(expected)," m); total sea Hs=",SEA.significant_height()," m")
+	check(absf(long_variance/expected-1.0)<0.05,"long components carry the spectrum's long-band energy within 5%")
 	var max_height_error := 0.0
 	var max_normal_error := 0.0
 	var max_inverse_error := 0.0
+	var max_batch_error := 0.0
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 82117
-	for count in [4,5,6,8]:
-		for i in range(128):
+	for count in [24,32]:
+		for i in range(64):
 			var target := Vector2(rng.randf_range(-180,180),rng.randf_range(-180,180))
 			var time := rng.randf_range(0,60)
 			var q := target
-			for iteration in range(6):
+			for iteration in range(8):
 				var p := reference_forward(q,time,count)
 				var dx := (reference_forward(q+Vector2(0.01,0),time,count)-reference_forward(q-Vector2(0.01,0),time,count))/0.02
 				var dz := (reference_forward(q+Vector2(0,0.01),time,count)-reference_forward(q-Vector2(0,0.01),time,count))/0.02
@@ -125,12 +144,14 @@ func _test_waves() -> void:
 				q -= Vector2(dz.z*error.x-dz.x*error.y,-dx.z*error.x+dx.x*error.y)/determinant
 			var reference := reference_forward(q,time,count)
 			var normal := (reference_forward(q+Vector2(0,0.01),time,count)-reference_forward(q-Vector2(0,0.01),time,count)).cross(reference_forward(q+Vector2(0.01,0),time,count)-reference_forward(q-Vector2(0.01,0),time,count)).normalized()
-			var actual: Dictionary = PROFILE.surface(target.x,target.y,time,count)
+			var actual: Dictionary = SEA.surface(target.x,target.y,time,count,Vector2(3.7,-1.9))
+			var batch: PackedFloat64Array = SEA.heights(PackedVector2Array([target]),time,count,Vector2(3.7,-1.9))
 			max_height_error = maxf(max_height_error,absf(actual.position.y-reference.y))
+			max_batch_error = maxf(max_batch_error,absf(batch[0]-reference.y))
 			max_normal_error = maxf(max_normal_error,actual.normal.distance_to(normal))
 			max_inverse_error = maxf(max_inverse_error,Vector2(actual.position.x,actual.position.z).distance_to(target))
-	print("Wave reference: 512 samples; height error=",max_height_error," m, inverse residual=",max_inverse_error," m, normal error=",max_normal_error)
-	check(max_height_error<0.01 and max_inverse_error<0.01 and max_normal_error<0.002,"Gerstner height, inverse and normal match independent Newton reference")
+	print("Wave reference: 128 samples; height error=",max_height_error," m, batched=",max_batch_error," m, inverse residual=",max_inverse_error," m, normal error=",max_normal_error)
+	check(max_height_error<0.01 and max_batch_error<0.01 and max_inverse_error<0.01 and max_normal_error<0.002,"long-wave height, batched height, inverse and normal match independent Newton reference")
 
 class RideDriver extends Node:
 	var ship: AnimatableBody3D

@@ -2,13 +2,20 @@ extends CharacterBody3D
 
 const ACTION_KEYS := {"move_forward": KEY_W, "move_back": KEY_S,
 	"move_left": KEY_A, "move_right": KEY_D, "sprint": KEY_SHIFT,
-	"crouch": KEY_C, "jump": KEY_SPACE, "interact": KEY_E, "pause": KEY_ESCAPE}
+	"crouch": KEY_C, "jump": KEY_SPACE, "interact": KEY_E, "pause": KEY_ESCAPE,
+	"brace": KEY_Q}
 signal footstep
 signal splashed
 @export var walk_speed := 1.6
-@export var sprint_speed := 4.5
+## A hurried jog: nobody sprints flat out on a pitching deck.
+@export var sprint_speed := 3.4
 @export var mouse_sensitivity := 0.002
+## Gait: the head rises and falls once per step and sways once per stride.
 @export_range(0.0, 0.04) var head_bob_amount := 0.015
+@export_range(0.0, 0.04) var head_sway_amount := 0.018
+## Step length, m: ~1.9 steps/s walking, ~2.9 running.
+const STEP_WALK := 0.8
+const STEP_RUN := 1.5
 var input_enabled := true
 var move_input := Vector2.ZERO
 var test_input := false
@@ -31,6 +38,21 @@ var released_route: Dictionary={}
 var climb_query: Callable
 var deck_pose: Callable
 var auto_duck := false
+## Standing at the ship's wheel (exploration/helm.gd): WASD steer, not walk.
+var at_helm := false
+## Sea legs (scripts/sea_legs.gd): apparent gravity on the moving deck,
+## staggering, sliding, bracing (hold Q) and the head's lag.
+var sea_legs = preload("res://scripts/sea_legs.gd").new()
+## Ship motion model (buoyancy.gd): the hull's own surge and turn are felt too.
+var motion: RefCounted
+## Wet planking (rain, spray) loses grip sooner.
+var wet := false
+var test_brace := false
+var braced := false
+var stance := "standing"
+var _gait := 0.0
+var _was_on_floor := true
+var _fall_speed := 0.0
 var in_climb_volume := false
 var standing_shape := CapsuleShape3D.new()
 var standing_query := PhysicsShapeQueryParameters3D.new()
@@ -104,6 +126,16 @@ func _physics_process(delta: float) -> void:
 	var axis := move_input if test_input else Vector2.ZERO
 	if captured and not test_input:
 		axis = Input.get_vector("move_left", "move_right", "move_forward", "move_back")
+	if at_helm:
+		axis = Vector2.ZERO
+	if carrying:
+		var hull := Vector3.ZERO
+		if motion != null:
+			var bow: Vector2 = motion.forward() * float(motion.speed)
+			hull = Vector3(bow.x, 0.0, bow.y)
+		sea_legs.sense(deck.global_transform, ship_position, hull, delta)
+	# A person losing their footing cannot walk where they like.
+	axis *= 1.0 - clampf(sea_legs.off_balance * 0.5, 0.0, 0.7)
 	floor_stop_on_slope = axis.is_zero_approx()
 	var crouched := test_crouch if test_input else captured and Input.is_action_pressed("crouch")
 	# The low, original arched passage is the only automatic stoop volume.
@@ -126,10 +158,20 @@ func _physics_process(delta: float) -> void:
 	var direction := global_basis * Vector3(axis.x, 0, axis.y)
 	var local_velocity := deck.global_basis.inverse()*velocity if carrying else velocity
 	var local_direction := deck.global_basis.inverse()*direction if carrying else direction
-	local_velocity.x = local_direction.x * speed
-	local_velocity.z = local_direction.z * speed
+	var sprinting := speed > walk_speed + 0.01
+	braced = at_helm or (test_brace if test_input else captured and Input.is_action_pressed("brace"))
+	stance = "braced" if braced else ("crouched" if crouched and not auto_duck else ("standing" if axis.is_zero_approx() else ("running" if sprinting else "walking")))
+	if carrying:
+		sea_legs.balance(delta, is_on_floor(), stance, wet)
+		speed *= sea_legs.walk_factor(Vector2(local_direction.x, local_direction.z).normalized())
+		# Bracing: a hand on the rail or a line, shuffling along.
+		if braced: speed = minf(speed, 0.7)
+	local_velocity.x = local_direction.x * speed + sea_legs.stagger.x
+	local_velocity.z = local_direction.z * speed + sea_legs.stagger.z
 	if not is_on_floor():
-		local_velocity.y -= 9.81 * delta
+		# Felt weight: lighter as the deck drops away, heavier as it rises.
+		local_velocity.y -= 9.81 * (sea_legs.weight if carrying else 1.0) * delta
+		_fall_speed = maxf(_fall_speed, -local_velocity.y)
 	else:
 		local_velocity.y = 0.0
 		if captured and Input.is_action_pressed("jump"):
@@ -160,7 +202,7 @@ func _physics_process(delta: float) -> void:
 		var floor_normal: Vector3=deck.global_basis.inverse()*get_floor_normal()
 		if floor_normal.y>0.1:
 			local_velocity.y=-(floor_normal.x*local_velocity.x+floor_normal.z*local_velocity.z)/floor_normal.y
-			local_velocity=local_velocity.limit_length(speed)
+			local_velocity=local_velocity.limit_length(maxf(speed,0.01))
 	velocity = deck.global_basis*local_velocity if carrying else local_velocity
 	var before_move:=global_position
 	var grounded_before:=is_on_floor()
@@ -168,7 +210,11 @@ func _physics_process(delta: float) -> void:
 	# A human can step over low hatch coamings. Sweep the full capsule upward,
 	# forward and down; never teleport through a wall or into a low ceiling.
 	var forward_motion:=direction*speed*delta
-	if grounded_before and is_on_wall() and not axis.is_zero_approx() and global_position.distance_to(before_move)<speed*delta*0.5:
+	# A staggering body stumbles over coamings the same way.
+	var staggering: bool=carrying and sea_legs.stagger.length()>0.3
+	if staggering:forward_motion+=deck.global_basis*sea_legs.stagger*delta
+	var blocked:=global_position.distance_to(before_move)<forward_motion.length()*0.5
+	if (grounded_before or staggering) and (is_on_wall() or staggering) and (not axis.is_zero_approx() or staggering) and blocked and forward_motion.length()>0.0001:
 		var rise:=up_direction*0.22
 		var raised:=global_transform
 		if not test_move(raised,rise):
@@ -190,14 +236,27 @@ func _physics_process(delta: float) -> void:
 		var upright := Basis.from_euler(Vector3(_pitch,global_rotation.y,0))
 		var leaning := global_basis*Basis.from_euler(Vector3(_pitch,0,0))
 		head.global_basis=upright.slerp(leaning.orthonormalized(),camera_roll_amount)
-	var distance := Vector2(velocity.x, velocity.z).length() * delta if is_on_floor() else 0.0
-	_bob_phase += distance * 9.0
-	_eye_height = move_toward(_eye_height, height-0.15, delta*1.6)
-	head.position.y = _eye_height + sin(_bob_phase) * head_bob_amount * minf(axis.length(), 1.0)
-	_step_distance += distance
-	if _step_distance >= 0.8:
-		_step_distance = 0.0
+	# Gait from distance walked over the deck (ship space), not through the world.
+	var walked := Vector2(local_velocity.x, local_velocity.z).length() if carrying else Vector2(velocity.x, velocity.z).length()
+	var distance := walked * delta if is_on_floor() else 0.0
+	var step := STEP_RUN if sprinting else STEP_WALK
+	var before_step := floori(_bob_phase / PI)
+	_bob_phase += distance / step * PI
+	var stepping := clampf(walked / walk_speed, 0.0, 1.0)
+	_gait = move_toward(_gait, stepping, delta * 4.0)
+	if floori(_bob_phase / PI) != before_step:
 		footstep.emit()
+	_step_distance += distance
+	if is_on_floor() and not _was_on_floor:
+		sea_legs.jolt(_fall_speed)
+		if _fall_speed > 1.5: footstep.emit()
+	if is_on_floor(): _fall_speed = 0.0
+	_was_on_floor = is_on_floor()
+	_eye_height = move_toward(_eye_height, height-0.15, delta*1.6)
+	# Lowest at each heel strike, highest mid-stance; running bounces more.
+	var bob := head_bob_amount * (1.8 if sprinting else 1.0)
+	head.position.y = _eye_height - cos(2.0 * _bob_phase) * bob * _gait
+	head.position.x = sin(_bob_phase) * head_sway_amount * _gait
 	var water_y: float = sea_height.call(global_position) if sea_height.is_valid() else 0.0
 	var inside: bool = inside_hull.call(global_position) if inside_hull.is_valid() else false
 	if global_position.y < water_y + 0.15 and not inside:
@@ -217,6 +276,7 @@ func _respawn() -> void:
 	_carry_initialized = false
 	ship_yaw = -PI / 2.0
 	velocity = Vector3.ZERO
+	sea_legs.reset()
 	tween = create_tween()
 	tween.tween_property(_fade, "color:a", 0.0, 0.35)
 	await tween.finished
@@ -231,8 +291,16 @@ func _process(_delta: float) -> void:
 	var yaw_basis := deck_basis * Basis(Vector3.UP, ship_yaw)
 	var looking := yaw_basis * Basis(Vector3.RIGHT, _pitch)
 	var upright := Basis.from_euler(Vector3(_pitch, yaw_basis.get_euler().y, 0))
+	# The inner ear holds the head to apparent gravity, not the true vertical:
+	# a lurch of the deck tilts the horizon for a moment.
+	var felt: Vector3 = sea_legs.up
+	if felt.angle_to(Vector3.UP) > 0.0005:
+		var lean := Basis(Quaternion(Vector3.UP, felt).slerp(Quaternion.IDENTITY, 0.5))
+		upright = lean * upright
 	head.global_basis = upright.slerp(looking.orthonormalized(), camera_roll_amount)
 	# Camera is independent of body interpolation; otherwise that parent would
 	# interpolate mouse yaw again after this render-time correction.
 	var eye := get_global_transform_interpolated().origin + deck_basis.y * head.position.y
+	# Gait sway to the side, and the neck's lag behind the deck's lurches.
+	eye += (yaw_basis * Vector3.RIGHT) * head.position.x + deck_basis * sea_legs.head
 	camera.global_transform = Transform3D(head.global_basis, eye)

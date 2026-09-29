@@ -2,18 +2,35 @@ extends MeshInstance3D
 # R1: the cap plane and its mesh-derived cross-section use the same height.
 # Keep future interior floors above this plane, or use the discard override.
 const BILGE_HEIGHT := 2.35
-const PROFILE = preload("res://ocean/default_waves.tres")
-var wave_count := 5
+const SEA = preload("res://ocean/default_sea.tres")
+const FftOcean = preload("res://ocean/fft_ocean.gd")
+const WakeSim = preload("res://ocean/wake_sim.gd")
+## Seconds of hull history a frozen capture replays into the wave simulation.
+const WAKE_REPLAY := 30.0
+var wave_count := 32
 var grid := 128
 var clip_mode := "occluder"
 var bilge: MeshInstance3D
 var hull_image: Image
+var keel_image: Image
 var ship: AnimatableBody3D
 var material := ShaderMaterial.new()
+var fft: RefCounted
+var wake: RefCounted
+## Ship motion (buoyancy.gd): supplies the water's drift past the hull.
+var motion: RefCounted
+var settings: Dictionary = {}
+var _last_render_time := NAN
+var _uploaded_table: Dictionary = {}
+var _spectrum_frame := 0
+## Extra glitter roughness from raindrop rings (atmosphere.gd sets it).
+var rain_roughness := 0.0
+var _variance_key := ""
+var _unresolved := 0.004
 
 func _ready() -> void:
  var quality = get_node("/root/Quality")
- var settings: Dictionary = quality.ocean_settings()
+ settings = quality.ocean_settings()
  wave_count = settings["ocean-waves"]
  grid = settings["ocean-grid"]
  visible = settings["ocean"] != "off"
@@ -39,19 +56,80 @@ func _ready() -> void:
  # and writes depth before ropes/glass (whose priority is zero).
  sorting_use_aabb_center = false
  sorting_offset = 100000.0 if order == "before" else 0.0
- material.set_shader_parameter("waves", PROFILE.waves)
- material.set_shader_parameter("wave_count", wave_count)
+ var table: Dictionary = SEA.long_waves(wave_count)
+ var waves := PackedVector4Array(table.gpu)
+ waves.resize(SEA.MAX_LONG_WAVES)
+ material.set_shader_parameter("long_waves", waves)
+ material.set_shader_parameter("long_count", table.count)
  var size: int = settings["ocean-detail-size"]
  for i in range(2):
   material.set_shader_parameter("detail"+str(i), load("res://ocean/detail_%d_%d.png" % [size,i]))
  material.set_shader_parameter("sun_direction", get_parent().sun_direction())
  material.set_shader_parameter("sun_energy", float(quality.overrides.get("sun-energy", LightingRig.SUN_ENERGY)))
+ material.set_shader_parameter("sun_color", Vector3(LightingRig.SUN_COLOR.r, LightingRig.SUN_COLOR.g, LightingRig.SUN_COLOR.b))
  material.set_shader_parameter("sky_map", _reflection_map())
  material.set_shader_parameter("sky_yaw", get_parent().SKY_YAW)
  material.set_shader_parameter("fog_enabled", quality.overrides.get("fog", "on") == "on")
  material.set_shader_parameter("grid_half", float(grid / 2 - 4))
+ # Open-ocean water: pure-water absorption plus a little phytoplankton, and
+ # particle backscatter typical of mid-latitude surface water (1/m, RGB).
+ _set_optics(Vector3(0.40, 0.06, 0.025), Vector3(0.003, 0.0045, 0.006))
+ material.set_shader_parameter("unresolved_variance", 0.004)
+ if settings["ocean-fft"] == "on" and FftOcean.supported():
+  fft = FftOcean.new(SEA, settings["ocean-fft-size"])
+  material.set_shader_parameter("fft_enabled", true)
+  material.set_shader_parameter("fft_displacement", fft.displacement)
+  material.set_shader_parameter("fft_moments", fft.displacement)
+  material.set_shader_parameter("fft_slopes", fft.slopes)
+  material.set_shader_parameter("fft_texels", float(fft.n))
+  var scales: PackedFloat32Array = fft.shader_scales()
+  for i in range(scales.size()):
+   material.set_shader_parameter("cascade_scale%d" % i, scales[i])
+  _update_variance()
  material_override = material
  _build_grid()
+
+## Ripples finer than the last cascade: Cox-Munk total for this wind minus
+## what the spectrum resolves. Recomputed when the weather moves the sea.
+func _update_variance() -> void:
+ _variance_key = SEA.sea_key()
+ var resolved: float = SEA.slope_variance(0.0001, fft.bands[-1].z, 512)
+ _unresolved = maxf(SEA.cox_munk_variance()-resolved, 0.002)
+ material.set_shader_parameter("unresolved_variance", _unresolved + rain_roughness)
+ # Whitecaps: the shader breaks crests where the surface Jacobian J (long
+ # band x first two cascades) is compressed below breaking_jacobian. J is
+ # close to normal about 1 with deviation choppiness x rms slope of those
+ # bands, so the threshold is the quantile that whitens the measured
+ # fraction of sea for this wind. (Live values through get(): see sea_state.)
+ var wind: float = SEA.get("wind_speed")
+ var spread := float(SEA.get("choppiness"))*sqrt(SEA.slope_variance(0.0001, fft.bands[1].z, 512))
+ # Monahan's fraction counts the residual foam too; the cascades carry that
+ # trail (foam decay), so the crests breaking now are about half of it.
+ var threshold := 1.0+spread*SEA._normal_quantile(maxf(0.5*whitecap_coverage(wind), 0.0001))
+ material.set_shader_parameter("breaking_jacobian", clampf(threshold-0.05, 0.15, 0.95))
+ material.set_shader_parameter("foam_streaks", smoothstep(15.0, 24.0, wind))
+ var heading: float = SEA.get("wind_heading")
+ material.set_shader_parameter("wind_direction", Vector2(cos(heading), sin(heading)))
+
+## Fraction of the sea surface white with whitecaps at wind speed U (m/s,
+## 10 m): W = 3.84e-6 U^3.41 (Monahan and O'Muircheartaigh 1980).
+static func whitecap_coverage(wind: float) -> float:
+ return clampf(3.84e-6*pow(wind, 3.41), 0.0, 0.3)
+
+func _exit_tree() -> void:
+ # Wake first: its uniform sets reference the FFT textures.
+ if wake: wake.release()
+ if fft: fft.release()
+ fft = null
+ wake = null
+
+## Diffuse "albedo" of the water column from its inherent optical properties:
+## irradiance reflectance ~0.33 b/(a+b) (Gordon), halved by the surface.
+func _set_optics(absorption: Vector3, backscatter: Vector3) -> void:
+ var ratio := Vector3(backscatter.x/(absorption.x+backscatter.x), backscatter.y/(absorption.y+backscatter.y), backscatter.z/(absorption.z+backscatter.z))
+ material.set_shader_parameter("absorption", absorption)
+ material.set_shader_parameter("backscatter", backscatter)
+ material.set_shader_parameter("water_albedo", ratio*0.165)
 
 func _build_grid() -> void:
  var vertices := PackedVector3Array()
@@ -93,16 +171,69 @@ func _process(_delta: float) -> void:
   var snap := 400.0/pow(float(grid/2-4),1.6)
   global_position = Vector3(snappedf(eye.x,snap),0,snappedf(eye.z,snap))
  var time: float = get_node("/root/SimClock").render_time()
+ var water_drift := render_drift()
  material.set_shader_parameter("sim_time", time)
- var phases := PackedFloat32Array()
- for wave in PROFILE.waves:
-  phases.append(fposmod(sqrt(9.81*TAU/wave.z)*time,TAU))
- material.set_shader_parameter("wave_phases", phases)
+ # A live sea (weather) crossfades layers every frame; a static one uploads once.
+ var table: Dictionary = SEA.components(time, wave_count)
+ if not is_same(table, _uploaded_table):
+  var waves := PackedVector4Array(table.gpu)
+  waves.resize(SEA.MAX_LONG_WAVES)
+  material.set_shader_parameter("long_waves", waves)
+  material.set_shader_parameter("long_count", table.count)
+  _uploaded_table = table
+ material.set_shader_parameter("long_phases", SEA.phases(time, wave_count, water_drift))
+ if fft:
+  _spectrum_frame += 1
+  if _spectrum_frame % 3 == 0:
+   fft.refresh(SEA.gpu_spectrum())
+   if SEA.sea_key() != _variance_key: _update_variance()
+  material.set_shader_parameter("unresolved_variance", _unresolved + rain_roughness)
+  var dt := 0.0 if is_nan(_last_render_time) else time-_last_render_time
+  fft.update(time, dt if dt >= 0.0 else -1.0)
+  var offsets: PackedVector2Array = fft.shader_offsets(water_drift)
+  for i in range(offsets.size()):
+   material.set_shader_parameter("cascade_offset%d" % i, offsets[i])
+ _last_render_time = time
+ if wake:
+  wake.flush()
+  material.set_shader_parameter("wake_rect", wake.shader_rect())
  if ship:
   material.set_shader_parameter("world_to_ship", ship.get_global_transform_interpolated().affine_inverse())
 
+func _physics_process(delta: float) -> void:
+ # World (priority -50) has already posed the hull for this tick.
+ if wake and ship and not get_node("/root/SimClock").frozen:
+  wake.step(ship.global_transform, get_node("/root/SimClock").time, delta, drift(), current())
+
+## Callable for buoyancy.pose_at(): replays the hull's last seconds into the
+## wave simulation so a frozen capture shows its real, settled wake.
+func wake_replay(time: float) -> Callable:
+ if wake == null: return Callable()
+ wake.reset()
+ var parent := get_parent() as Node3D
+ return func(pose: Transform3D, t: float, dt: float) -> void:
+  if t > time-WAKE_REPLAY: wake.step(parent.global_transform*pose, t, dt, drift(), current())
+
+## A splash in the reactive simulation (no-op without a RenderingDevice).
+func disturb(point: Vector3, radius: float, depth: float) -> void:
+ if wake: wake.disturb(point, radius, depth)
+
+## Water displacement past the ship at the current physics tick.
+func drift() -> Vector2:
+ return motion.drift if motion else Vector2.ZERO
+
+## Water velocity past the ship.
+func current() -> Vector2:
+ return motion.water_velocity() if motion else Vector2.ZERO
+
+## Drift between physics ticks, matching the interpolated render time.
+func render_drift() -> Vector2:
+ if motion == null: return Vector2.ZERO
+ if get_node("/root/SimClock").frozen: return motion.drift
+ return motion.drift_at(Engine.get_physics_interpolation_fraction())
+
 func surface_at(p: Vector3) -> float:
- return PROFILE.surface(p.x,p.z,get_node("/root/SimClock").time,wave_count).position.y
+ return SEA.surface(p.x,p.z,get_node("/root/SimClock").time,wave_count,drift()).position.y
 
 func build_hull_mask(hull: MeshInstance3D, source_mesh: Mesh = null) -> void:
  # Rasterize hull triangles in ship XY; retain Z interval at each texel.
@@ -158,6 +289,42 @@ func build_hull_mask(hull: MeshInstance3D, source_mesh: Mesh = null) -> void:
  hull_image=image
  var texture := ImageTexture.create_from_image(image)
  material.set_shader_parameter("hull_bounds",texture)
+ _build_keel(image)
+ _start_wake()
+
+## Lowest hull point under each ship-local XZ cell (100 = open water), on the
+## same 39 x 12 m frame as the contact distance field. The reactive wave
+## simulation reads it as the hull's draft below the incident surface.
+func _build_keel(bounds: Image) -> void:
+ var width := 192
+ var height := 64
+ var keel := PackedFloat32Array()
+ keel.resize(width*height)
+ keel.fill(100.0)
+ var data := bounds.get_data().to_float32_array()
+ for x in range(width):
+  var px := -16.0+float(x)*39.0/float(width-1)
+  if px < -14.0 or px > 21.0: continue
+  var col := int(round((px+14.0)/35.0*191.0))
+  for row in range(64):
+   var low := data[(row*192+col)*2]
+   var high := data[(row*192+col)*2+1]
+   if low >= high: continue
+   var y := -2.0+float(row)/63.0*5.0
+   for z in range(maxi(0,int(ceil((low+6.0)/12.0*float(height-1)))),mini(height-1,int(floor((high+6.0)/12.0*float(height-1))))+1):
+    if keel[z*width+x] > 50.0: keel[z*width+x] = y
+ keel_image = Image.create_from_data(width,height,false,Image.FORMAT_RF,keel.to_byte_array())
+
+func _start_wake() -> void:
+ if wake or settings.get("ocean-wake","off") != "on" or not FftOcean.supported(): return
+ # The FFT textures are created on the render thread; resolve them there too.
+ var chop := Callable()
+ if fft:
+  var source: RefCounted = fft
+  chop = func() -> RID: return source._textures[0] if not source._textures.is_empty() else RID()
+ wake = WakeSim.new(SEA, wave_count, settings["ocean-wake-size"], settings["ocean-wake-extent"], ImageTexture.create_from_image(keel_image), chop, FftOcean.SIZES)
+ material.set_shader_parameter("wake_enabled", true)
+ material.set_shader_parameter("wake_map", wake.texture)
 
 func _reflection_map() -> ImageTexture:
  # Small mipmapped radiance approximation. Static sky: paid once at startup.

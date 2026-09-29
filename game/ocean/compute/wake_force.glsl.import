@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://mwu51do3r344"
+path="res://.godot/imported/wake_force.glsl-9bbe88823ed263ad8d14f997724dad19.res"
+
+[deps]
+
+source_file="res://ocean/compute/wake_force.glsl"
+dest_files=["res://.godot/imported/wake_force.glsl-9bbe88823ed263ad8d14f997724dad19.res"]
+
+[params]
+

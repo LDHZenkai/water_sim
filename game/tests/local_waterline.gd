@@ -1,7 +1,7 @@
 extends RefCounted
 # Independent geometry oracle: local bottom from source vertices within 0.30 m;
 # deck edge from upward triangles connected in height to the walking surface.
-const PROFILE = preload("res://ocean/default_waves.tres")
+const SEA = preload("res://ocean/default_sea.tres")
 
 static func samples(world: Node3D) -> Array[Dictionary]:
  var faces: PackedVector3Array = world.hull_source_mesh.get_faces()
@@ -77,7 +77,7 @@ static func run(world: Node3D, check: Callable, flood_control: bool = false) -> 
   cap_points.append(cap[i])
   cap_points.append(cap[i+2])
   cap_points.append((cap[i]+cap[i+1]+cap[i+2])/3.0)
- for count in [5,8]:
+ for count in [24,32]:
   var motion = preload("res://ocean/buoyancy.gd").new()
   var deck_clear := INF
   var wet := INF
@@ -95,27 +95,39 @@ static func run(world: Node3D, check: Callable, flood_control: bool = false) -> 
    if flood_control: pose.origin.y-=2.0
    final_pose=pose
    max_pitch=maxf(max_pitch,absf(rad_to_deg(motion.pitch)))
-   max_roll=maxf(max_roll,absf(rad_to_deg(motion.roll)))
+   # Waves' roll about the steady heel the sails put on the hull.
+   max_roll=maxf(max_roll,absf(rad_to_deg(motion.roll-motion.heel)))
    pitch_windows[i/1800]=maxf(pitch_windows[i/1800],absf(rad_to_deg(motion.pitch)))
-   roll_windows[i/1800]=maxf(roll_windows[i/1800],absf(rad_to_deg(motion.roll)))
+   roll_windows[i/1800]=maxf(roll_windows[i/1800],absf(rad_to_deg(motion.roll-motion.heel)))
    if i%6!=0: continue
+   var probes := PackedVector2Array()
+   var placed: Array[Vector3] = []
    for sample in perimeter:
-    var p: Vector3=pose*sample.point
-    var water: Vector3=pose.affine_inverse()*Vector3(p.x,PROFILE.surface(p.x,p.z,t,count).position.y,p.z)
+    placed.append(pose*sample.point)
+   for point in cap_points:
+    placed.append(pose*point)
+   for p in placed: probes.append(Vector2(p.x,p.z))
+   var heights: PackedFloat64Array=SEA.heights(probes,t,count,motion.drift)
+   for j in range(perimeter.size()):
+    var sample: Dictionary=perimeter[j]
+    var p: Vector3=placed[j]
+    var water: Vector3=pose.affine_inverse()*Vector3(p.x,heights[j],p.z)
     deck_clear=minf(deck_clear,sample.deck-water.y)
     if water.y-sample.bottom<wet:
      wet=water.y-sample.bottom
      wet_point=sample.point
-   for point in cap_points:
-    var p: Vector3=pose*point
-    var water: Vector3=pose.affine_inverse()*Vector3(p.x,PROFILE.surface(p.x,p.z,t,count).position.y,p.z)
-    cap_clear=minf(cap_clear,point.y-water.y)
+   for j in range(cap_points.size()):
+    var p: Vector3=placed[perimeter.size()+j]
+    var water: Vector3=pose.affine_inverse()*Vector3(p.x,heights[perimeter.size()+j],p.z)
+    cap_clear=minf(cap_clear,cap_points[j].y-water.y)
   print("LOCAL ",count," waves: samples=",perimeter.size()," deck clearance=",deck_clear," m; wet depth=",wet," m at ",wet_point,"; cap clearance=",cap_clear," m")
-  print("MOTION ",count," waves: pitch=",max_pitch," roll=",max_roll,"; pitch windows=",pitch_windows,"; roll windows=",roll_windows)
+  print("MOTION ",count," waves: pitch=",max_pitch," roll about heel=",max_roll," heel=",rad_to_deg(motion.heel),"; pitch windows=",pitch_windows,"; roll windows=",roll_windows)
   check.call(deck_clear>=0.30,"local deck clearance >=0.30 m, tier "+str(count))
   check.call(wet>=0.40,"local bottom submergence >=0.40 m including bow/stern, tier "+str(count))
   check.call(cap_clear>=0.10,"ocean below actual bilge cap by >=0.10 m, tier "+str(count))
   check.call(max_pitch>=0.5 and max_pitch<=4.0 and max_roll>=0.75 and max_roll<=3.0,"physical pitch 0.5..4 and roll 0.75..3 degrees, tier "+str(count))
-  check.call(pitch_windows[3]<=maxf(pitch_windows[0],pitch_windows[1])+0.15 and roll_windows[3]<=maxf(roll_windows[0],roll_windows[1])+0.15,"pitch and roll do not grow over 120 s, tier "+str(count))
+  # A random sea's 30 s peaks scatter by ~10% window to window; a diverging
+  # (under-damped) hull would grow far faster than 12% over 90 s.
+  check.call(pitch_windows[3]<=maxf(pitch_windows[0],pitch_windows[1])*1.12+0.15 and roll_windows[3]<=maxf(roll_windows[0],roll_windows[1])*1.12+0.15,"pitch and roll do not grow over 120 s, tier "+str(count))
   if not flood_control:
    check.call(final_pose.is_equal_approx(motion.pose_at(120.0,count)),"frozen capture pose equals fixed-step simulation, tier "+str(count))

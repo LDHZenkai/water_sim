@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://bnbxssounbapw"
+path="res://.godot/imported/cascade_resolve.glsl-3b72818faa2c5f387974f56cc82b8a02.res"
+
+[deps]
+
+source_file="res://ocean/compute/cascade_resolve.glsl"
+dest_files=["res://.godot/imported/cascade_resolve.glsl-3b72818faa2c5f387974f56cc82b8a02.res"]
+
+[params]
+
